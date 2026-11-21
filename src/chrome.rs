@@ -1,5 +1,5 @@
 //! Compact pictograms and accessible controls for Seyir’s toolbar.
-use crate::canvas::Canvas;
+use crate::{canvas::Canvas, theme};
 use eframe::egui::{
     self, Color32, FontId, Painter, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui,
     Vec2, WidgetInfo, WidgetType, pos2, vec2,
@@ -129,14 +129,18 @@ impl<'a> Tile<'a> {
             let dark = ui.visuals().dark_mode;
             let surface = ui.visuals().panel_fill;
             let color = self.icon.ink(ui);
-            let intensity = if selected {
-                0.26
-            } else if hovered || response.has_focus() {
+            let intensity = if !selected && (hovered || response.has_focus()) {
                 0.19
             } else if clickable {
                 0.10
             } else {
                 0.015
+            };
+            let base_fill = surface.lerp_to_gamma(color, intensity);
+            let (fill, active_ink) = if selected {
+                theme::selected_tool_colors(base_fill, color, ui.visuals().text_color())
+            } else {
+                (base_fill, color)
             };
             let shadow = if dark {
                 Color32::from_black_alpha(57)
@@ -158,13 +162,7 @@ impl<'a> Tile<'a> {
             } else {
                 Stroke::new(1_f32, surface.lerp_to_gamma(color, intensity + 0.08))
             };
-            painter.rect(
-                face,
-                9,
-                surface.lerp_to_gamma(color, intensity),
-                edge,
-                StrokeKind::Inside,
-            );
+            painter.rect(face, 9, fill, edge, StrokeKind::Inside);
             if clickable && !pressed {
                 let shine = if dark { 27 } else { 115 };
                 painter.line_segment(
@@ -176,7 +174,7 @@ impl<'a> Tile<'a> {
                 );
             }
             let ink = if clickable {
-                color
+                active_ink
             } else {
                 surface.lerp_to_gamma(ui.visuals().text_color(), 0.38)
             };
@@ -197,9 +195,6 @@ impl<'a> Tile<'a> {
                     ],
                     Stroke::new(1.3_f32, ink),
                 ));
-            }
-            if selected {
-                painter.circle_filled(pos2(face.max.x - 5.5, face.min.y + 5.5), 1.75, ink);
             }
         }
         response.on_hover_cursor(egui::CursorIcon::PointingHand)

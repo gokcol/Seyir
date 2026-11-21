@@ -4,6 +4,17 @@ use eframe::egui::{self, Color32, Stroke};
 
 pub(crate) const CANVAS_INK: Color32 = Color32::from_rgb(219, 224, 236);
 
+pub(crate) fn selected_tool_colors(
+    surface: Color32,
+    tone: Color32,
+    strong_ink: Color32,
+) -> (Color32, Color32) {
+    (
+        surface.lerp_to_gamma(tone, 0.09),
+        tone.lerp_to_gamma(strong_ink, 0.14),
+    )
+}
+
 fn palette(layout: Layout, dark: bool) -> [Color32; 8] {
     let colors = match (layout, dark) {
         // Panel, card, secondary text, border, accent, selection, text, canvas.

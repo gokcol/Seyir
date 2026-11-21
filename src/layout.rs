@@ -1,4 +1,5 @@
 //! Layout choices and the per-user preference shared by both platforms.
+use crate::theme;
 use eframe::egui::{self, Color32, FontId, Rect, Stroke, StrokeKind, Ui, pos2, vec2};
 use std::{fs, io, io::Write as _, path::Path, path::PathBuf};
 
@@ -163,10 +164,13 @@ fn choice(ui: &mut Ui, layout: Layout, current: Layout) -> bool {
     });
     let visual = ui.visuals();
     let accent = visual.selection.stroke.color;
+    let (selected_fill, selected_ink) =
+        theme::selected_tool_colors(visual.window_fill(), accent, visual.text_color());
+    let diagram_ink = if selected { selected_ink } else { accent };
     let interaction = ui.style().interact(&response);
     if selected || response.hovered() || response.has_focus() {
         let fill = if selected {
-            visual.selection.bg_fill
+            selected_fill
         } else {
             interaction.weak_bg_fill
         };
@@ -177,7 +181,7 @@ fn choice(ui: &mut Ui, layout: Layout, current: Layout) -> bool {
         };
         ui.painter().rect(rect, 8, fill, stroke, StrokeKind::Inside);
     }
-    diagram(ui, layout, rect.left_center() + vec2(18., 0.), accent);
+    diagram(ui, layout, rect.left_center() + vec2(18., 0.), diagram_ink);
     ui.painter().text(
         rect.left_top() + vec2(36., 7.),
         egui::Align2::LEFT_TOP,
@@ -200,7 +204,7 @@ fn choice(ui: &mut Ui, layout: Layout, current: Layout) -> bool {
                 center + vec2(-1., 3.),
                 center + vec2(4.5, -3.5),
             ],
-            Stroke::new(1.5_f32, accent),
+            Stroke::new(1.5_f32, diagram_ink),
         ));
     }
     let activated = response
