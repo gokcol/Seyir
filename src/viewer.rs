@@ -26,6 +26,8 @@ use std::{
 mod image_edit;
 #[path = "viewer_panels.rs"]
 pub(crate) mod panel_ui;
+#[path = "recents.rs"]
+mod recents;
 
 enum Reply {
     Image(u64, Result<Loaded, String>),
@@ -165,6 +167,7 @@ pub struct Viewer {
     image_request: u64,
     folder_request: u64,
     file: Option<PathBuf>,
+    recents: recents::Recents,
     folder: Option<PathBuf>,
     entries: Vec<Entry>,
     preview_first_file: bool,
@@ -287,6 +290,7 @@ impl Viewer {
             image_request: 0,
             folder_request: 0,
             file: None,
+            recents: recents::Recents::load(),
             folder: None,
             entries: Vec::new(),
             preview_first_file: false,
@@ -345,6 +349,11 @@ impl Viewer {
                             }
                             self.status.clear();
                             self.error = false;
+                            if let Some(path) = &self.file
+                                && let Err(error) = self.recents.record(path)
+                            {
+                                eprintln!("Could not save recent images: {error}");
+                            }
                             self.prepare_neighbors();
                         }
                         Err(error) => {
@@ -2584,11 +2593,18 @@ impl Viewer {
                         forward: state.forward,
                     }
                 });
-            let (canvas, image_clicked) = self.canvas.paint(
+            let touch_allowed = self.picker.is_none()
+                && !self.settings_open
+                && self.export.is_none()
+                && self.save_confirmation.is_none()
+                && self.crop.is_none()
+                && !egui::Popup::is_any_open(ui.ctx());
+            let (canvas, image_clicked, swipe) = self.canvas.paint(
                 ui,
                 texture.id(),
                 [image.pixels.width(), image.pixels.height()],
                 transition,
+                touch_allowed,
             );
             if canvas.secondary_clicked() && !image_clicked {
                 egui::Popup::close_id(ui.ctx(), egui::Popup::default_response_id(&canvas));
@@ -2597,6 +2613,12 @@ impl Viewer {
                     .frame(crate::theme::menu_frame(ui.style()))
                     .style(crate::theme::menu_style)
                     .show(|ui| self.image_context_menu(ui));
+            }
+            if let Some(direction) = swipe
+                && !canvas.secondary_clicked()
+                && !egui::Popup::is_any_open(ui.ctx())
+            {
+                self.navigate(direction == canvas::Swipe::Next);
             }
         } else if let Some(transition) = &self.transition {
             transition
@@ -2696,7 +2718,7 @@ impl Viewer {
     }
 
     fn file_actions(&mut self, ui: &mut egui::Ui) {
-        use crate::chrome::{Icon, menu_item};
+        use crate::chrome::{Icon, menu_item, submenu};
 
         let open = ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(
             egui::Modifiers::COMMAND,
@@ -2707,6 +2729,29 @@ impl Viewer {
         }
         if menu_item(ui, Icon::OpenFolder, "Open Folder…", true, "") {
             self.pick(PickKind::Folder);
+        }
+        let recent = submenu(ui, Icon::OpenImage, "Recent Images", |ui| {
+            ui.set_width(228.);
+            let mut available = self.recents.available().peekable();
+            if available.peek().is_none() {
+                ui.weak("No recent images available");
+            }
+            for path in available {
+                if ui
+                    .add(egui::Button::new(path_name(path)).truncate())
+                    .on_hover_text(work::display_name(path.as_os_str()))
+                    .clicked()
+                {
+                    ui.close();
+                    return Some(path.to_owned());
+                }
+            }
+            None
+        });
+        if let Some(path) = recent.flatten() {
+            egui::Popup::close_all(ui.ctx());
+            self.stop_slideshow(ui.ctx());
+            self.open_file(path);
         }
         ui.separator();
         if menu_item(ui, Icon::Save, "Save Image", self.can_save_image(), "") {
@@ -3039,6 +3084,11 @@ mod tests {
         let ctx = egui::Context::default();
         let creation = eframe::CreationContext::_new_kittest(ctx.clone());
         let mut viewer = Viewer::new(&creation, OpenQueue::default());
+        let directory = tempfile::tempdir().unwrap();
+        let recent_path = directory.path().join("Recent test image.png");
+        RgbaImage::new(2, 2).save(&recent_path).unwrap();
+        viewer.recents = recents::Recents::default();
+        viewer.recents.record(&recent_path).unwrap();
         let stage = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(680., 420.));
         let mut frame = |events| {
             ctx.run(
@@ -3116,6 +3166,19 @@ mod tests {
         ))]);
         let output = frame(vec![egui::Event::PointerMoved(open_image)]);
         assert!(label(&output, "Open Image…").is_some());
+        let recent_images = label(&output, "Recent Images").expect("File shows Recent Images");
+        frame(vec![egui::Event::PointerMoved(recent_images)]);
+        let output = frame(vec![]);
+        let recent_image =
+            label(&output, "Recent test image.png").expect("Recent Images opens a submenu");
+        let output = frame(vec![egui::Event::PointerMoved(recent_image)]);
+        assert!(label(&output, "Recent test image.png").is_some());
+        frame(vec![click(recent_image, true)]);
+        frame(vec![click(recent_image, false)]);
+
+        frame(vec![egui::Event::PointerMoved(more), click(more, true)]);
+        frame(vec![click(more, false)]);
+        frame(vec![]);
         let settings = egui::pos2(popup.rect.right() - 22., popup.rect.center().y);
         frame(vec![egui::Event::PointerMoved(settings)]);
         frame(vec![
@@ -3124,6 +3187,7 @@ mod tests {
         ]);
         frame(vec![click(settings, false)]);
         assert!(viewer.settings_open);
+        assert_eq!(viewer.file.as_deref(), Some(recent_path.as_path()));
     }
 
     #[test]

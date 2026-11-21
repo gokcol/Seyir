@@ -15,5 +15,6 @@ install -m 644 packaging/macos/Seyir.icns "$app/Contents/Resources/Seyir.icns"
 plutil -lint "$app/Contents/Info.plist"
 codesign --force --sign - "$app"
 codesign --verify --strict "$app"
-ditto -c -k --sequesterRsrc --keepParent "$app" "dist/Seyir-1.0.0-macos-$architecture.zip"
-sh scripts/bundle-macos-dmg.sh "$app" "dist/Seyir-1.0.0-macos-$architecture.dmg"
+version=$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")
+ditto -c -k --sequesterRsrc --keepParent "$app" "dist/Seyir-$version-macos-$architecture.zip"
+sh scripts/bundle-macos-dmg.sh "$app" "dist/Seyir-$version-macos-$architecture.dmg"

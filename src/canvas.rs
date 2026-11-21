@@ -2,12 +2,48 @@
 use eframe::egui::{self, Color32, Pos2, Rect, Vec2};
 use image::{Rgba, RgbaImage};
 
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct Canvas {
     pub zoom: Option<f32>,
     pub angle: f32,
     offset: Vec2,
     display_zoom: f32,
+    touch: TouchGesture,
+}
+
+impl Clone for Canvas {
+    fn clone(&self) -> Self {
+        Self {
+            zoom: self.zoom,
+            angle: self.angle,
+            offset: self.offset,
+            display_zoom: self.display_zoom,
+            touch: TouchGesture::default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Swipe {
+    Previous,
+    Next,
+}
+
+type ContactId = (egui::TouchDeviceId, egui::TouchId);
+
+#[derive(Clone, Copy, Default)]
+enum TouchGesture {
+    #[default]
+    Idle,
+    Single {
+        contact: ContactId,
+        start: Pos2,
+        last: Pos2,
+        started_at: f64,
+        pan: bool,
+    },
+    Pinch,
+    Suppressed,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -216,7 +252,8 @@ impl Canvas {
         texture: egui::TextureId,
         size: [u32; 2],
         transition: Option<Transition<'_>>,
-    ) -> (egui::Response, bool) {
+        touch_allowed: bool,
+    ) -> (egui::Response, bool, Option<Swipe>) {
         let (view, response) = ui.allocate_exact_size(
             ui.available_size().max(Vec2::splat(1.)),
             egui::Sense::click_and_drag(),
@@ -224,34 +261,21 @@ impl Canvas {
         let image = egui::vec2(size[0] as f32, size[1] as f32);
         let ratio = ui.ctx().pixels_per_point();
         self.display_zoom = self.fit_zoom(view, image, ratio);
-        if response.hovered() {
-            let (scroll, pinch, pointer) = ui.input(|input| {
-                (
-                    input.raw_scroll_delta.y,
-                    input.zoom_delta(),
-                    input.pointer.hover_pos(),
-                )
-            });
-            let factor = if (pinch - 1.).abs() > f32::EPSILON {
-                pinch
-            } else {
-                (scroll * 0.003).exp()
-            };
-            if factor != 1.0 {
-                let before = self.zoom_ratio();
-                self.set_zoom(before * factor);
-                if let Some(pointer) = pointer {
-                    let anchor = pointer - view.center();
-                    self.offset = anchor + (self.offset - anchor) * (self.zoom_ratio() / before);
-                }
-            }
-        }
-        if response.dragged_by(egui::PointerButton::Primary) {
-            self.offset += response.drag_delta();
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-        } else if response.hovered() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-        }
+        let native_touch = ui.input(|input| {
+            input.any_touches()
+                || input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::Touch { .. }))
+        });
+        let swipe = if native_touch {
+            // winit also supplies mouse events for the first finger.
+            self.touch_input(ui, &response, view, touch_allowed)
+        } else {
+            self.touch = TouchGesture::Idle;
+            self.pointer_input(ui, &response, view);
+            None
+        };
         let layer = if let Some(transition) = transition {
             let (outgoing, incoming) = transition.layers(view);
             let [width, height] = transition.size;
@@ -273,7 +297,161 @@ impl Canvas {
             && response
                 .interact_pointer_pos()
                 .is_some_and(|pos| layer.clip.contains(pos) && quad.contains(pos));
-        (response, image_secondary_click)
+        (response, image_secondary_click, swipe)
+    }
+
+    fn pointer_input(&mut self, ui: &egui::Ui, response: &egui::Response, view: Rect) {
+        if response.hovered() {
+            let (scroll, pinch, pointer) = ui.input(|input| {
+                (
+                    input.raw_scroll_delta.y,
+                    input.zoom_delta(),
+                    input.pointer.hover_pos(),
+                )
+            });
+            let factor = if (pinch - 1.).abs() > f32::EPSILON {
+                pinch
+            } else {
+                (scroll * 0.003).exp()
+            };
+            if factor != 1.0 {
+                if let Some(pointer) = pointer {
+                    self.zoom_around(factor, view.center(), pointer, pointer);
+                } else {
+                    self.step_zoom(factor);
+                }
+            }
+        }
+        if response.dragged_by(egui::PointerButton::Primary) {
+            self.offset += response.drag_delta();
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        } else if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
+    }
+
+    fn zoom_around(&mut self, factor: f32, view_center: Pos2, before: Pos2, after: Pos2) {
+        if !factor.is_finite() || factor <= 0. {
+            return;
+        }
+        let old_zoom = self.zoom_ratio();
+        if factor != 1. {
+            self.set_zoom(old_zoom * factor);
+        }
+        self.offset = (after - view_center)
+            + (self.offset - (before - view_center)) * (self.zoom_ratio() / old_zoom);
+    }
+
+    fn touch_input(
+        &mut self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        view: Rect,
+        touch_allowed: bool,
+    ) -> Option<Swipe> {
+        let (active, focused, now, pinch, events) = ui.input(|input| {
+            let events = input.events.iter().filter_map(|event| match *event {
+                egui::Event::Touch {
+                    device_id,
+                    id,
+                    phase,
+                    pos,
+                    ..
+                } => Some(((device_id, id), phase, pos)),
+                _ => None,
+            });
+            (
+                input.any_touches(),
+                input.focused,
+                input.time,
+                input.multi_touch(),
+                events.collect::<Vec<_>>(),
+            )
+        });
+        if !touch_allowed || !focused || !response.enabled() {
+            self.touch = if active {
+                TouchGesture::Suppressed
+            } else {
+                TouchGesture::Idle
+            };
+            return None;
+        }
+
+        let starts_on_canvas = |pos| {
+            response.interact_rect.contains(pos)
+                && ui
+                    .ctx()
+                    .layer_id_at(pos)
+                    .is_none_or(|layer| layer == response.layer_id)
+        };
+        let mut swipe = None;
+        for (contact, phase, pos) in events {
+            match phase {
+                egui::TouchPhase::Start => {
+                    self.touch = match self.touch {
+                        TouchGesture::Idle if starts_on_canvas(pos) => TouchGesture::Single {
+                            contact,
+                            start: pos,
+                            last: pos,
+                            started_at: now,
+                            pan: self.zoom_ratio() > self.display_zoom * 1.01,
+                        },
+                        TouchGesture::Single { contact: first, .. }
+                            if first != contact
+                                && first.0 == contact.0
+                                && starts_on_canvas(pos) =>
+                        {
+                            TouchGesture::Pinch
+                        }
+                        _ => TouchGesture::Suppressed,
+                    };
+                }
+                egui::TouchPhase::Move | egui::TouchPhase::End => {
+                    let ending = phase == egui::TouchPhase::End;
+                    if let TouchGesture::Single {
+                        contact: first,
+                        start,
+                        ref mut last,
+                        started_at,
+                        pan,
+                    } = self.touch
+                        && first == contact
+                    {
+                        if pan {
+                            self.offset += pos - *last;
+                        }
+                        *last = pos;
+                        if ending {
+                            if !pan && now - started_at <= 0.9 {
+                                swipe = horizontal_swipe(pos - start, view.width());
+                            }
+                            self.touch = TouchGesture::Idle;
+                        }
+                    } else if ending && matches!(self.touch, TouchGesture::Pinch) {
+                        self.touch = TouchGesture::Suppressed;
+                    }
+                }
+                egui::TouchPhase::Cancel => {
+                    self.touch = TouchGesture::Suppressed;
+                    swipe = None;
+                }
+            }
+        }
+        if matches!(self.touch, TouchGesture::Pinch)
+            && let Some(pinch) = pinch
+            && (pinch.zoom_delta != 1. || pinch.translation_delta != Vec2::ZERO)
+        {
+            self.zoom_around(
+                pinch.zoom_delta,
+                view.center(),
+                pinch.center_pos - pinch.translation_delta,
+                pinch.center_pos,
+            );
+        }
+        if !active {
+            self.touch = TouchGesture::Idle;
+        }
+        swipe
     }
 
     fn fit_zoom(&self, view: Rect, image: Vec2, ratio: f32) -> f32 {
@@ -300,6 +478,15 @@ impl Canvas {
             cos,
         }
     }
+}
+
+fn horizontal_swipe(delta: Vec2, view_width: f32) -> Option<Swipe> {
+    let minimum = (view_width * 0.12).clamp(52., 96.);
+    (delta.x.abs() >= minimum && delta.x.abs() >= delta.y.abs() * 1.5).then_some(if delta.x < 0. {
+        Swipe::Next
+    } else {
+        Swipe::Previous
+    })
 }
 
 fn normalize_angle(value: f32) -> f32 {
@@ -385,6 +572,138 @@ fn sample(image: &RgbaImage, x: f64, y: f64) -> Rgba<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::{TouchPhase, pos2, vec2};
+
+    #[derive(Default)]
+    struct TouchCanvas {
+        ctx: egui::Context,
+        canvas: Canvas,
+    }
+
+    impl TouchCanvas {
+        fn frame(&mut self, events: Vec<egui::Event>, touch_allowed: bool) -> Option<Swipe> {
+            let mut swipe = None;
+            let _ = self.ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(300., 300.))),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        (_, _, swipe) = self.canvas.paint(
+                            ui,
+                            egui::TextureId::Managed(0),
+                            [600, 400],
+                            None,
+                            touch_allowed,
+                        );
+                    });
+                },
+            );
+            swipe
+        }
+
+        fn finger(&mut self, phase: TouchPhase, pos: Pos2) -> Option<Swipe> {
+            self.frame(primary_touch(phase, pos), true)
+        }
+    }
+
+    fn touch(id: u64, phase: TouchPhase, pos: Pos2) -> egui::Event {
+        egui::Event::Touch {
+            device_id: egui::TouchDeviceId(1),
+            id: egui::TouchId(id),
+            phase,
+            pos,
+            force: None,
+        }
+    }
+
+    fn primary_touch(phase: TouchPhase, pos: Pos2) -> Vec<egui::Event> {
+        let mut events = vec![touch(1, phase, pos)];
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        match phase {
+            TouchPhase::Start => events.extend([egui::Event::PointerMoved(pos), button(true)]),
+            TouchPhase::Move => events.push(egui::Event::PointerMoved(pos)),
+            TouchPhase::End => events.extend([button(false), egui::Event::PointerGone]),
+            TouchPhase::Cancel => events.push(egui::Event::PointerGone),
+        }
+        events
+    }
+
+    #[test]
+    fn touch_swipes_browse_at_fit_and_pan_when_zoomed() {
+        let mut view = TouchCanvas::default();
+        view.frame(vec![], true);
+        let left = pos2(75., 150.);
+        let right = pos2(225., 147.);
+        for (start, end, direction) in [(right, left, Swipe::Next), (left, right, Swipe::Previous)]
+        {
+            assert_eq!(view.finger(TouchPhase::Start, start), None);
+            assert_eq!(view.finger(TouchPhase::Move, end), None);
+            assert_eq!(view.finger(TouchPhase::End, end), Some(direction));
+            assert_eq!(view.canvas.offset, Vec2::ZERO);
+        }
+
+        view.canvas.set_zoom(2.);
+        view.finger(TouchPhase::Start, right);
+        view.finger(TouchPhase::Move, left);
+        assert_eq!(view.finger(TouchPhase::End, left), None);
+        assert_eq!(view.canvas.offset, left - right);
+    }
+
+    #[test]
+    fn touchscreen_pinch_zooms_around_both_fingers_without_swiping() {
+        let mut view = TouchCanvas::default();
+        view.frame(vec![], true);
+        let fit = view.canvas.zoom_ratio();
+        let left = pos2(100., 145.);
+        let right = pos2(200., 145.);
+        view.finger(TouchPhase::Start, left);
+        view.frame(vec![touch(2, TouchPhase::Start, right)], true);
+        let mut spread = primary_touch(TouchPhase::Move, pos2(50., 145.));
+        spread.push(touch(2, TouchPhase::Move, pos2(250., 145.)));
+        assert_eq!(view.frame(spread, true), None);
+        assert!((view.canvas.zoom_ratio() - fit * 2.).abs() < 1e-6);
+        assert!(view.canvas.offset.x.abs() < 1e-6);
+
+        let mut contract = primary_touch(TouchPhase::Move, left);
+        contract.push(touch(2, TouchPhase::Move, right));
+        assert_eq!(view.frame(contract, true), None);
+        assert!((view.canvas.zoom_ratio() - fit).abs() < 1e-6);
+        assert_eq!(view.finger(TouchPhase::End, left), None);
+        let end = pos2(55., 145.);
+        assert_eq!(
+            view.frame(vec![touch(2, TouchPhase::Move, end)], true),
+            None
+        );
+        assert_eq!(view.frame(vec![touch(2, TouchPhase::End, end)], true), None);
+        assert_eq!(view.finger(TouchPhase::Start, right), None);
+        assert_eq!(view.finger(TouchPhase::End, end), Some(Swipe::Next));
+    }
+
+    #[test]
+    fn cancelled_or_blocked_touches_do_not_navigate() {
+        let mut view = TouchCanvas::default();
+        view.frame(vec![], true);
+        let start = pos2(225., 150.);
+        let end = pos2(75., 150.);
+        view.finger(TouchPhase::Start, start);
+        view.finger(TouchPhase::Move, end);
+        assert_eq!(view.finger(TouchPhase::Cancel, end), None);
+
+        view.frame(primary_touch(TouchPhase::Start, start), false);
+        assert_eq!(view.finger(TouchPhase::Move, end), None);
+        assert_eq!(view.finger(TouchPhase::End, end), None);
+        view.finger(TouchPhase::Start, pos2(150., 225.));
+        assert_eq!(view.finger(TouchPhase::End, pos2(150., 75.)), None);
+        assert_eq!(view.canvas.offset, Vec2::ZERO);
+    }
 
     #[test]
     fn context_click_only_hits_the_displayed_quadrilateral() {
@@ -403,7 +722,8 @@ mod tests {
                 },
                 |ctx| {
                     egui::CentralPanel::default().show(ctx, |ui| {
-                        (_, hit) = canvas.paint(ui, egui::TextureId::Managed(0), [120, 80], None);
+                        (_, hit, _) =
+                            canvas.paint(ui, egui::TextureId::Managed(0), [120, 80], None, true);
                     });
                 },
             );

@@ -42,7 +42,9 @@ jobs:
         run: |
           cargo build --locked --release
           New-Item -ItemType Directory -Path dist
-          Compress-Archive -LiteralPath target/release/seyir.exe,README.md,'packaging/windows/Register Open With.cmd','packaging/windows/Remove Open With.cmd' -DestinationPath dist/Seyir-1.0.0-windows-x64.zip
+          $versionLine = Select-String -LiteralPath Cargo.toml -Pattern '^version = "([0-9]+\.[0-9]+\.[0-9]+)"$' -List
+          $version = $versionLine.Matches[0].Groups[1].Value
+          Compress-Archive -LiteralPath target/release/seyir.exe,README.md,'packaging/windows/Register Open With.cmd','packaging/windows/Remove Open With.cmd' -DestinationPath "dist/Seyir-$version-windows-x64.zip"
       - name: Verify Explorer Open With registration
         if: runner.os == 'Windows'
         shell: pwsh

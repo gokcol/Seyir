@@ -56,7 +56,7 @@ fn main() -> eframe::Result {
     let options = NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         viewport: egui::ViewportBuilder::default()
-            .with_title("Seyir 1.0")
+            .with_title(concat!("Seyir ", env!("CARGO_PKG_VERSION")))
             .with_icon(
                 eframe::icon_data::from_png_bytes(include_bytes!("../assets/seyir.png"))
                     .expect("Seyir icon is a valid PNG"),

@@ -1,9 +1,11 @@
-# Seyir 1.0
+# Seyir
 
 Seyir is a native image viewer for macOS and Windows. Open one image and use the arrow keys to browse its neighbors. **Show Folder Browser** opens the thumbnails and selects the image already on screen. In **Focus Mode** and **Floating Controls**, the browser starts hidden and opens as a vertical panel from the folder icon on the floating toolbar.
 
 - Hover over **File** to open an image or folder, save, export, or print. You can also drop an image into the window or open it from Finder or Explorer. The folder browser starts at your home folder and follows the parent of the image you open.
+- **File → Recent Images** remembers up to 12 opened images across launches.
 - **← / →** browse files in the folder using the selected order. The folder sidebar can sort by natural filename order or most recently modified.
+- On a touchscreen, swipe left or right at Fit zoom to browse the next or previous image. Pinch to zoom around your fingers, then drag with one finger to pan a zoomed image.
 - **Fit** or **1:1** shows the fitted image or its actual pixels. Zoom from 10% to 1000% with the toolbar or scroll over the image. Drag to pan. Click **Rotate** to turn the image 90° clockwise. Hover over it for angle controls, Crop, Flip Horizontal, Flip Vertical, and Undo Image Edit. From the focused Rotate button, Shift+F10 opens the same controls by keyboard.
 - **Copy Image** copies the full-size image at its displayed angle. Hover over Copy for **Copy Resized…**. **Save As…** exports PNG, JPEG, or WebP with the same resize choices. Both offer percentages and custom dimensions that preserve the aspect ratio.
 - **Save Image** applies the displayed edits to supported single-image PNG, JPEG, and WebP originals after confirmation. **Print** opens the system print dialog for the displayed image.

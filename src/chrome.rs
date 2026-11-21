@@ -325,6 +325,10 @@ fn tool_menu(
         .frame(frame);
     if popup.show(&mut contents).is_none() {
         let mut tooltip = egui::Tooltip::for_enabled(button).width(COMPACT_MENU_WIDTH);
+        let id = egui::Tooltip::next_tooltip_id(ui.ctx(), button.id);
+        if pointer_at_submenu(ui.ctx(), id) {
+            tooltip.popup = tooltip.popup.open(true);
+        }
         tooltip.popup = tooltip
             .popup
             .layout(egui::Layout::top_down_justified(egui::Align::Min))
@@ -529,7 +533,8 @@ pub(crate) fn floating_tool_popup<R>(
                 && (state.pinned
                     || popup(state.tool).get_popup_rect().is_some_and(|panel| {
                         floating_tool_contains_pointer(ctx, trigger.rect, panel)
-                    }))
+                    })
+                    || pointer_at_submenu(ctx, parent_id.with(state.tool)))
         })
     };
     let result = next.and_then(|state| {
@@ -556,7 +561,8 @@ pub(crate) fn floating_tool_popup<R>(
         && parent.response.clicked_elsewhere()
         && result
             .as_ref()
-            .is_none_or(|popup| popup.response.clicked_elsewhere());
+            .is_none_or(|popup| popup.response.clicked_elsewhere())
+        && !next.is_some_and(|state| pointer_at_submenu(ctx, parent_id.with(state.tool)));
     if clicked_elsewhere
         || result
             .as_ref()
@@ -574,6 +580,20 @@ pub(crate) fn floating_tool_popup<R>(
         });
     }
     result.map(|popup| popup.inner)
+}
+
+fn pointer_at_submenu(ctx: &egui::Context, menu_id: egui::Id) -> bool {
+    use egui::containers::menu::MenuState;
+
+    let submenu = MenuState::from_id(ctx, menu_id, |state| state.open_item);
+    submenu
+        .and_then(|id| ctx.read_response(id))
+        .zip(ctx.read_response(menu_id))
+        .is_some_and(|(submenu, menu)| {
+            let area = menu.rect.union(submenu.rect);
+            ctx.pointer_hover_pos()
+                .is_some_and(|pos| area.contains(pos))
+        })
 }
 
 fn floating_tool_contains_pointer(ctx: &egui::Context, trigger: Rect, panel: Rect) -> bool {
