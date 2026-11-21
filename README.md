@@ -4,7 +4,7 @@ Seyir is a native image viewer for macOS and Windows. Open one image and use the
 
 - **Open** a file, drop it into the window, or choose **Open folder**. You can also open images from Finder or Explorer.
 - **← / →** browse files in the folder using the selected order. The folder sidebar can sort by natural filename order or most recently modified.
-- **Fit** or **1:1** shows the fitted image or its actual pixels. Zoom from 10% to 1000% with the toolbar or scroll over the image. Drag to pan. **Rotate** offers 90° turns and a fine-angle control.
+- **Fit** or **1:1** shows the fitted image or its actual pixels. Zoom from 10% to 1000% with the toolbar or scroll over the image. Drag to pan. Click **Rotate** to turn the image 90° clockwise. Hover over it or click its arrow for left and right turns, a fine-angle control, or reset.
 - **Copy Image** puts the full-size image at its displayed angle on the clipboard. View zoom does not change copied dimensions.
 - **Info** shows dimensions, format, file size, modification date, and available EXIF or color profile information. Reveal the source in Finder or Explorer from the same panel.
 - **Save metadata** writes title, description, author, copyright, and comma-separated keywords as embedded XMP in JPEG, PNG, and WebP. It preserves the encoded image and unrelated metadata. Changes are applied atomically and stale edits are rejected. The Info panel explains when a file cannot be edited.

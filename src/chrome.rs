@@ -16,6 +16,7 @@ pub(crate) enum Icon {
     Actual,
     ZoomIn,
     Rotate,
+    RotateOptions,
     Copy,
     Edit,
     Info,
@@ -71,6 +72,16 @@ impl<'a> Tile<'a> {
     }
 
     pub(crate) fn show(self, ui: &mut Ui) -> Response {
+        let hint = self.hint.unwrap_or(self.label);
+        let response = self.button(ui);
+        if response.enabled() {
+            response.on_hover_text(hint)
+        } else {
+            response.on_disabled_hover_text(hint)
+        }
+    }
+
+    pub(crate) fn button(self, ui: &mut Ui) -> Response {
         let galley = self.caption.then(|| {
             ui.painter().layout_no_wrap(
                 self.label.into(),
@@ -80,7 +91,12 @@ impl<'a> Tile<'a> {
         });
         let caption_width = galley.as_ref().map_or(0., |label| label.size().x + 6.);
         let dropdown_width = if self.dropdown { 10. } else { 0. };
-        let size = vec2(33. + caption_width + dropdown_width, 33.);
+        let icon_width = if matches!(self.icon, Icon::RotateOptions) {
+            20.
+        } else {
+            33.
+        };
+        let size = vec2(icon_width + caption_width + dropdown_width, 33.);
         let response = ui
             .add_enabled_ui(self.enabled, |ui| {
                 ui.allocate_exact_size(size, Sense::click())
@@ -152,7 +168,7 @@ impl<'a> Tile<'a> {
             } else {
                 surface.lerp_to_gamma(ui.visuals().text_color(), 0.38)
             };
-            let center = pos2(face.left() + 16.5, face.center().y);
+            let center = pos2(face.left() + icon_width * 0.5, face.center().y);
             self.icon.paint(painter, center, ink);
             if let Some(label) = galley {
                 let at = pos2(face.left() + 29., face.center().y - label.size().y / 2.);
@@ -174,14 +190,7 @@ impl<'a> Tile<'a> {
                 painter.circle_filled(pos2(face.max.x - 5.5, face.min.y + 5.5), 1.75, ink);
             }
         }
-        let hint = self.hint.unwrap_or(self.label);
-        if clickable {
-            response
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text(hint)
-        } else {
-            response.on_disabled_hover_text(hint)
-        }
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
     }
 }
 
@@ -214,7 +223,7 @@ impl Icon {
                 ([10, 108, 106], [116, 229, 215])
             }
             Self::Previous | Self::Next => ([58, 78, 123], [170, 190, 235]),
-            Self::Rotate => ([107, 61, 166], [203, 167, 255]),
+            Self::Rotate | Self::RotateOptions => ([107, 61, 166], [203, 167, 255]),
             Self::OpenImage | Self::Copy | Self::Info => ([44, 84, 166], [149, 188, 255]),
         };
         let [r, g, b] = if ui.visuals().dark_mode { dark } else { light };
@@ -318,6 +327,7 @@ impl Icon {
                 line(&[(12.1, 6.2), tip, (16.7, 2.8)]);
                 dot(12., 12., 1.6);
             }
+            Self::RotateOptions => line(&[(8.5, 10.5), (12., 14.), (15.5, 10.5)]),
             Self::Copy => {
                 line(&[
                     (7.5, 16.5),

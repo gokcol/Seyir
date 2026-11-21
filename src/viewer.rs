@@ -627,11 +627,28 @@ impl Viewer {
         }
     }
 
+    fn rotation_options(&mut self, ui: &mut egui::Ui) {
+        if ui.button("90° left").clicked() {
+            self.canvas.rotate_by(-90.);
+        }
+        if ui.button("90° right").clicked() {
+            self.canvas.rotate_by(90.);
+        }
+        ui.add(
+            egui::Slider::new(&mut self.canvas.angle, -180.0..=180.0)
+                .suffix("°")
+                .text("Angle"),
+        );
+        if ui.button("Reset rotation").clicked() {
+            self.canvas.angle = 0.;
+        }
+    }
+
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         use crate::chrome::{self, Icon, Tile};
 
         let has_picture = self.picture.is_some();
-        let show_edit_caption = ui.available_width() >= 740.;
+        let show_edit_caption = ui.available_width() >= 800.;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(7., 6.);
             chrome::brand(ui, &self.app_icon);
@@ -715,26 +732,19 @@ impl Viewer {
                 {
                     self.canvas.step_zoom(1.25);
                 }
-                let rotate = Tile::new(Icon::Rotate, "Rotate")
-                    .dropdown()
+                let rotate = Tile::new(Icon::Rotate, "Rotate right 90°")
+                    .enabled(has_picture)
+                    .button(ui);
+                if rotate.clicked() {
+                    self.canvas.rotate_by(90.);
+                }
+                rotate.on_hover_ui(|ui| self.rotation_options(ui));
+                let options = Tile::new(Icon::RotateOptions, "Rotation options")
                     .enabled(has_picture)
                     .show(ui);
-                egui::Popup::menu(&rotate).show(|ui| {
-                    if ui.button("90° left").clicked() {
-                        self.canvas.rotate_by(-90.);
-                    }
-                    if ui.button("90° right").clicked() {
-                        self.canvas.rotate_by(90.);
-                    }
-                    ui.add(
-                        egui::Slider::new(&mut self.canvas.angle, -180.0..=180.0)
-                            .suffix("°")
-                            .text("Angle"),
-                    );
-                    if ui.button("Reset rotation").clicked() {
-                        self.canvas.angle = 0.;
-                    }
-                });
+                egui::Popup::menu(&options)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| self.rotation_options(ui));
             });
             chrome::group(ui, |ui| {
                 if Tile::new(Icon::Copy, "Copy Image")
@@ -767,7 +777,7 @@ impl Viewer {
                                 }
                             });
                         }
-                    } else if Tile::new(Icon::Edit, "Edit in Bediz")
+                    } else if Tile::new(Icon::Edit, "Copy and Open Bediz")
                         .hint("Copy and open Bediz · This Bediz build uses Paste to receive images")
                         .caption(show_edit_caption)
                         .enabled(has_picture)
