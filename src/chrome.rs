@@ -6,7 +6,8 @@ use eframe::egui::{
 };
 
 const TILE_SIZE: f32 = 33.;
-const ROW_HEIGHT: f32 = 41.;
+const ROW_HEIGHT: f32 = 35.;
+const TILE_CORNER: u8 = 5;
 
 #[derive(Clone, Copy)]
 pub(crate) enum Icon {
@@ -30,10 +31,13 @@ pub(crate) enum Icon {
     FlipVertical,
     Undo,
     Copy,
+    CopyResized,
     Edit,
     Info,
     Fullscreen,
     Play,
+    Stop,
+    Transition,
     More,
     Settings,
 }
@@ -88,7 +92,6 @@ pub(crate) struct Tile<'a> {
     enabled: bool,
     selected: Option<bool>,
     caption: bool,
-    icon_only: bool,
     dropdown: bool,
     min_width: f32,
 }
@@ -102,7 +105,6 @@ impl<'a> Tile<'a> {
             enabled: true,
             selected: None,
             caption: false,
-            icon_only: false,
             dropdown: false,
             min_width: 0.,
         }
@@ -120,11 +122,6 @@ impl<'a> Tile<'a> {
 
     pub(crate) fn caption(mut self, visible: bool) -> Self {
         self.caption = visible;
-        self
-    }
-
-    pub(crate) fn icon_only(mut self) -> Self {
-        self.icon_only = true;
         self
     }
 
@@ -155,38 +152,24 @@ impl<'a> Tile<'a> {
 
     pub(crate) fn button(self, ui: &mut Ui) -> Response {
         let settings = matches!(self.icon, Icon::Settings);
-        let long_caption = self.caption && !self.icon_only;
-        let short_caption =
-            !self.icon_only && !self.caption && !settings && !ui.layout().is_vertical();
-        let caption = if long_caption {
-            self.label
-        } else if short_caption {
-            self.icon.toolbar_label()
-        } else {
-            ""
-        };
-        let galley = (!caption.is_empty()).then(|| {
+        let galley = self.caption.then(|| {
             ui.painter().layout_no_wrap(
-                caption.into(),
-                FontId::proportional(if short_caption { 10. } else { 12.5 }),
+                self.label.into(),
+                FontId::proportional(12.5),
                 ui.visuals().text_color(),
             )
         });
         let caption_width = galley.as_ref().map_or(0., |label| label.size().x + 6.);
         let dropdown_width = if self.dropdown { 10. } else { 0. };
-        let icon_width = if settings { 30. } else { TILE_SIZE };
-        let width = if short_caption {
-            icon_width.max(caption_width)
-        } else {
-            icon_width + caption_width
-        };
-        let height = if settings {
-            26.
-        } else if short_caption {
-            ROW_HEIGHT
+        let icon_width = if self.caption {
+            28.
+        } else if settings {
+            30.
         } else {
             TILE_SIZE
         };
+        let width = icon_width + caption_width;
+        let height = if settings { 26. } else { TILE_SIZE };
         let size = vec2((width + dropdown_width).max(self.min_width), height);
         let response = ui
             .add_enabled_ui(self.enabled, |ui| {
@@ -213,20 +196,23 @@ impl<'a> Tile<'a> {
             if selected {
                 let (fill, active_ink) =
                     theme::selected_tool_colors(surface, tone, visuals.text_color());
-                painter.rect_filled(face, 6, fill);
+                painter.rect_filled(face, TILE_CORNER, fill);
                 ink = active_ink;
             } else if pressed || (clickable && response.hovered()) {
-                let intensity = if pressed { 0.08 } else { 0.06 };
-                painter.rect_filled(face, 6, surface.lerp_to_gamma(tone, intensity));
+                let intensity = if pressed { 0.12 } else { 0.08 };
+                painter.rect_filled(face, TILE_CORNER, surface.lerp_to_gamma(tone, intensity));
             } else if !clickable {
-                ink = surface.lerp_to_gamma(tone, 0.43);
+                ink = surface.lerp_to_gamma(tone, 0.55);
             }
             if response.has_focus() {
-                painter.rect_stroke(face, 6, Stroke::new(1_f32, tone), StrokeKind::Inside);
+                painter.rect_stroke(
+                    face,
+                    TILE_CORNER,
+                    Stroke::new(1_f32, tone),
+                    StrokeKind::Inside,
+                );
             }
-            let center = if short_caption {
-                response.rect.center() - vec2(dropdown_width * 0.5, 7.)
-            } else if long_caption {
+            let center = if self.caption {
                 pos2(
                     response.rect.left() + icon_width * 0.5,
                     response.rect.center().y,
@@ -234,14 +220,13 @@ impl<'a> Tile<'a> {
             } else {
                 response.rect.center() - vec2(dropdown_width * 0.5, 0.)
             };
-            let nudge = if pressed { 0.65 } else { 0. };
+            let nudge = if pressed { 0.5 } else { 0. };
             self.icon.paint(painter, center + vec2(0., nudge), ink);
             if let Some(label) = galley {
-                let at = if short_caption {
-                    pos2(center.x, response.rect.center().y + 11.) - label.size() * 0.5
-                } else {
-                    pos2(response.rect.left() + 29., center.y - label.size().y * 0.5)
-                };
+                let at = pos2(
+                    response.rect.left() + icon_width - 3.,
+                    center.y - label.size().y * 0.5,
+                );
                 let label_ink = if selected {
                     visuals.text_color()
                 } else if clickable {
@@ -272,7 +257,7 @@ pub(crate) fn row(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
     let size = vec2(ui.available_width(), ROW_HEIGHT);
     let layout = egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true);
     ui.allocate_ui_with_layout(size, layout, |ui| {
-        ui.spacing_mut().item_spacing = vec2(10., 6.);
+        ui.spacing_mut().item_spacing = vec2(8., 5.);
         add(ui);
     });
 }
@@ -280,21 +265,21 @@ pub(crate) fn row(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
 pub(crate) fn group(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
     if ui.layout().is_vertical() {
         ui.vertical_centered(|ui| {
-            ui.spacing_mut().item_spacing.y = 3.;
+            ui.spacing_mut().item_spacing.y = 2.;
             add(ui);
         });
     } else {
         let size = vec2(ui.available_size_before_wrap().x, ROW_HEIGHT);
         let layout = egui::Layout::left_to_right(egui::Align::Center);
         ui.allocate_ui_with_layout(size, layout, |ui| {
-            ui.spacing_mut().item_spacing.x = 3.;
+            ui.spacing_mut().item_spacing.x = 2.;
             add(ui);
         });
     }
 }
 
 pub(crate) fn brand(ui: &mut Ui, texture: &egui::TextureHandle) -> Response {
-    ui.add(egui::Image::new((texture.id(), Vec2::splat(ROW_HEIGHT))).alt_text("Seyir"))
+    ui.add(egui::Image::new((texture.id(), Vec2::splat(31.))).alt_text("Seyir"))
 }
 
 pub(crate) fn file_menu(ui: &mut Ui, add: impl FnMut(&mut Ui)) -> Response {
@@ -323,7 +308,6 @@ fn tool_menu(
     open: Option<egui::SetOpenCommand>,
     mut add: impl FnMut(&mut Ui),
 ) {
-    const WIDTH: f32 = 181.;
     let frame = theme::floating(ui.ctx());
     let align = if ui.layout().is_vertical() {
         egui::RectAlign::RIGHT_START
@@ -331,7 +315,7 @@ fn tool_menu(
         egui::RectAlign::BOTTOM_START
     };
     let mut contents = |ui: &mut Ui| {
-        ui.set_min_width(WIDTH);
+        ui.set_width(COMPACT_MENU_WIDTH);
         add(ui);
     };
     let popup = egui::Popup::menu(button)
@@ -340,7 +324,7 @@ fn tool_menu(
         .gap(2.)
         .frame(frame);
     if popup.show(&mut contents).is_none() {
-        let mut tooltip = egui::Tooltip::for_enabled(button).width(WIDTH);
+        let mut tooltip = egui::Tooltip::for_enabled(button).width(COMPACT_MENU_WIDTH);
         tooltip.popup = tooltip
             .popup
             .layout(egui::Layout::top_down_justified(egui::Align::Min))
@@ -367,25 +351,274 @@ pub(crate) fn menu_item(
 }
 
 fn menu_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, shortcut: &str) -> Response {
-    let icon_id = egui::Id::new("menu-icon");
-    let icon_slot = egui::Atom::custom(icon_id, vec2(20., 19.));
-    let mut button = egui::Button::new((icon_slot, label))
-        .frame_when_inactive(false)
-        .min_size(vec2(0., 23.));
-    if !shortcut.is_empty() {
-        button = button.shortcut_text(shortcut);
+    const LABEL_LEFT: f32 = 28.;
+    const RIGHT_PADDING: f32 = 7.;
+    let visuals = ui.visuals();
+    let surface = visuals.window_fill();
+    let tone = icon.ink(ui);
+    let text_ink = visuals.text_color();
+    let muted_ink = visuals.weak_text_color();
+    let border = visuals.window_stroke.color;
+    let text = ui
+        .painter()
+        .layout_no_wrap(label.into(), FontId::proportional(13.), text_ink);
+    let hint = (!shortcut.is_empty() && shortcut != "›").then(|| {
+        let key = shortcut.replace("Cmd+", "⌘");
+        ui.painter()
+            .layout_no_wrap(key, FontId::proportional(10.5), muted_ink)
+    });
+    let trailing = hint.as_ref().map_or_else(
+        || {
+            if shortcut == "›" {
+                18.
+            } else {
+                RIGHT_PADDING
+            }
+        },
+        |key| key.size().x + 21.,
+    );
+    let width = ui
+        .min_rect()
+        .width()
+        .max(LABEL_LEFT + text.size().x + trailing);
+    let (rect, response) = ui
+        .add_enabled_ui(enabled, |ui| {
+            ui.allocate_exact_size(vec2(width, 27.), Sense::click())
+        })
+        .inner;
+    let active = response.enabled();
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, active, label));
+    if active
+        && ui.data_mut(|data| {
+            data.remove_temp::<bool>(ui.id().with("focus-first-menu-item"))
+                .unwrap_or(false)
+        })
+    {
+        response.request_focus();
     }
-    let item = ui.add_enabled_ui(enabled, |ui| button.atom_ui(ui)).inner;
-    if let Some(rect) = item.rect(icon_id) {
-        let ink = icon.ink(ui);
-        let ink = if item.response.enabled() {
-            ink
+
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        if active
+            && (response.hovered() || response.has_focus() || response.is_pointer_button_down_on())
+        {
+            let fill = surface.lerp_to_gamma(tone, 0.14);
+            let focus = if response.has_focus() {
+                Stroke::new(1_f32, tone)
+            } else {
+                Stroke::NONE
+            };
+            painter.rect(rect, 4, fill, focus, StrokeKind::Inside);
+        }
+        let icon_ink = if active {
+            tone
         } else {
-            ui.visuals().window_fill().lerp_to_gamma(ink, 0.43)
+            surface.lerp_to_gamma(muted_ink, 0.65)
         };
-        icon.paint(ui.painter(), rect.center(), ink);
+        let ink = if active {
+            text_ink
+        } else {
+            surface.lerp_to_gamma(muted_ink, 0.78)
+        };
+        icon.paint(painter, rect.left_center() + vec2(13., 0.), icon_ink);
+        let left = rect.left_center() + vec2(LABEL_LEFT, -text.size().y / 2.);
+        painter.galley_with_override_text_color(left, text, ink);
+        if let Some(hint) = hint {
+            let badge = Rect::from_center_size(
+                rect.right_center() - vec2(RIGHT_PADDING + (hint.size().x + 8.) * 0.5, 0.),
+                vec2(hint.size().x + 8., 17.),
+            );
+            painter.rect(
+                badge,
+                3,
+                surface.lerp_to_gamma(border, 0.25),
+                Stroke::new(1_f32, border),
+                StrokeKind::Inside,
+            );
+            painter.galley_with_override_text_color(
+                badge.center() - hint.size() * 0.5,
+                hint,
+                muted_ink,
+            );
+        } else if shortcut == "›" {
+            let at = rect.right_center() - vec2(11., 0.);
+            painter.line(
+                vec![
+                    at + vec2(-1.5, -3.5),
+                    at + vec2(2., 0.),
+                    at + vec2(-1.5, 3.5),
+                ],
+                Stroke::new(1.35_f32, muted_ink),
+            );
+        }
     }
-    item.response
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+const COMPACT_MENU_WIDTH: f32 = 152.;
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum FloatingTool {
+    File,
+    Rotate,
+}
+
+impl FloatingTool {
+    fn width(self) -> f32 {
+        match self {
+            Self::File => COMPACT_MENU_WIDTH,
+            Self::Rotate => ROTATION_WIDTH,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct FloatingToolState {
+    tool: FloatingTool,
+    pinned: bool,
+}
+
+pub(crate) fn floating_tool_popup<R>(
+    toggle: &Response,
+    parent_id: egui::Id,
+    parent: Option<egui::InnerResponse<[Response; 2]>>,
+    content: impl FnOnce(&mut Ui, FloatingTool, bool) -> R,
+) -> Option<R> {
+    let ctx = &toggle.ctx;
+    let state_id = parent_id.with("active-tool");
+    let Some(parent) = parent.filter(|parent| !parent.response.should_close()) else {
+        ctx.data_mut(|data| data.remove::<FloatingToolState>(state_id));
+        return None;
+    };
+    let [file, rotate] = &parent.inner;
+    let popup = |tool: FloatingTool| {
+        let trigger = match tool {
+            FloatingTool::File => file,
+            FloatingTool::Rotate => rotate,
+        };
+        egui::Popup::menu(trigger)
+            .id(parent_id.with(tool))
+            .open(true)
+            .anchor(pos2(trigger.rect.center().x, parent.response.rect.top()))
+            .align(egui::RectAlign::TOP)
+            .align_alternatives(&[])
+            .gap(8.)
+            .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
+            .width(tool.width())
+            .frame(egui::Frame::new())
+            .style(theme::menu_style)
+    };
+    let triggers = [(FloatingTool::File, file), (FloatingTool::Rotate, rotate)];
+    let previous = ctx.data(|data| data.get_temp::<FloatingToolState>(state_id));
+    let clicked = triggers.iter().find(|(_, trigger)| trigger.clicked());
+    let hovered = triggers.iter().find(|(_, trigger)| trigger.hovered());
+    let next = if let Some(&(tool, _)) = clicked {
+        Some(FloatingToolState { tool, pinned: true })
+    } else if let Some(&(tool, _)) = hovered {
+        Some(FloatingToolState {
+            tool,
+            pinned: previous.is_some_and(|state| state.tool == tool && state.pinned),
+        })
+    } else {
+        previous.filter(|state| {
+            let trigger = match state.tool {
+                FloatingTool::File => file,
+                FloatingTool::Rotate => rotate,
+            };
+            trigger.enabled()
+                && (state.pinned
+                    || popup(state.tool).get_popup_rect().is_some_and(|panel| {
+                        floating_tool_contains_pointer(ctx, trigger.rect, panel)
+                    }))
+        })
+    };
+    let result = next.and_then(|state| {
+        let focus_first =
+            clicked.is_some_and(|(_, trigger)| !trigger.clicked_by(egui::PointerButton::Primary));
+        popup(state.tool).show(|ui| {
+            // During the first visible sizing pass an area can grow below its bottom pivot.
+            let mut clip = ui.clip_rect();
+            clip.max.y = clip.max.y.min(parent.response.rect.top() - 2.);
+            ui.set_clip_rect(clip);
+            theme::menu_frame(ui.style())
+                .show(ui, |ui| {
+                    ui.set_width(state.tool.width());
+                    if state.tool == FloatingTool::File && focus_first {
+                        let focus_id = ui.id().with("focus-first-menu-item");
+                        ui.data_mut(|data| data.insert_temp(focus_id, true));
+                    }
+                    content(ui, state.tool, focus_first)
+                })
+                .inner
+        })
+    });
+    let clicked_elsewhere = !toggle.clicked()
+        && parent.response.clicked_elsewhere()
+        && result
+            .as_ref()
+            .is_none_or(|popup| popup.response.clicked_elsewhere());
+    if clicked_elsewhere
+        || result
+            .as_ref()
+            .is_some_and(|popup| popup.response.should_close())
+    {
+        egui::Popup::close_id(ctx, parent_id);
+        ctx.data_mut(|data| data.remove::<FloatingToolState>(state_id));
+    } else {
+        ctx.data_mut(|data| {
+            if let Some(state) = next {
+                data.insert_temp(state_id, state);
+            } else {
+                data.remove::<FloatingToolState>(state_id);
+            }
+        });
+    }
+    result.map(|popup| popup.inner)
+}
+
+fn floating_tool_contains_pointer(ctx: &egui::Context, trigger: Rect, panel: Rect) -> bool {
+    let bridge = Rect::from_min_max(
+        pos2(trigger.left().min(panel.left()), panel.bottom()),
+        pos2(trigger.right().max(panel.right()), trigger.top()),
+    );
+    ctx.input(|input| {
+        input
+            .pointer
+            .hover_pos()
+            .is_some_and(|pos| trigger.contains(pos) || panel.contains(pos) || bridge.contains(pos))
+            || (input.pointer.any_down()
+                && input
+                    .pointer
+                    .press_origin()
+                    .is_some_and(|start| panel.contains(start)))
+    })
+}
+
+pub(crate) fn floating_rotation_panel(
+    ui: &mut Ui,
+    canvas: &mut Canvas,
+    tools: TransformTools,
+    focus_first: bool,
+) -> Option<TransformAction> {
+    let accent = Icon::Rotate.ink(ui);
+    rotation_panel(ui, canvas, accent, focus_first, tools)
+}
+
+pub(crate) fn submenu<R>(
+    ui: &mut Ui,
+    icon: Icon,
+    label: &str,
+    content: impl FnOnce(&mut Ui) -> R,
+) -> Option<R> {
+    let row = menu_button(ui, icon, label, true, "›");
+    let config = egui::containers::menu::MenuConfig::new().style(theme::menu_style);
+    egui::containers::menu::SubMenu::new()
+        .config(config)
+        .show(ui, &row, |ui| {
+            ui.set_width(COMPACT_MENU_WIDTH);
+            content(ui)
+        })
+        .map(|popup| popup.inner)
 }
 
 pub(crate) fn rotation_item(
@@ -394,16 +627,26 @@ pub(crate) fn rotation_item(
     enabled: bool,
     tools: TransformTools,
 ) -> Option<TransformAction> {
-    let row = menu_button(ui, Icon::Rotate, "Rotation", enabled, "›");
+    let row = menu_button(ui, Icon::Rotate, "Rotate and Edit", enabled, "›");
+    rotation_submenu(ui, &row, canvas, tools)
+}
+
+pub(crate) fn rotation_submenu(
+    ui: &mut Ui,
+    row: &Response,
+    canvas: &mut Canvas,
+    tools: TransformTools,
+) -> Option<TransformAction> {
     if !row.enabled() {
         return None;
     }
     let accent = Icon::Rotate.ink(ui);
     let config = egui::containers::menu::MenuConfig::new()
+        .style(theme::menu_style)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
     egui::containers::menu::SubMenu::new()
         .config(config)
-        .show(ui, &row, |ui| {
+        .show(ui, row, |ui| {
             rotation_panel(ui, canvas, accent, false, tools)
         })
         .and_then(|response| response.inner)
@@ -426,10 +669,7 @@ pub(crate) fn rotation(
     }
 
     let accent = Icon::Rotate.ink(ui);
-    let frame = egui::Frame::popup(ui.style())
-        .corner_radius(13)
-        .inner_margin(12)
-        .fill(ui.visuals().window_fill().lerp_to_gamma(accent, 0.035));
+    let frame = theme::menu_frame(ui.style()).inner_margin(9);
     let align = if ui.layout().is_vertical() {
         egui::RectAlign::RIGHT_START
     } else {
@@ -456,7 +696,7 @@ pub(crate) fn rotation(
     (rotate, action)
 }
 
-const ROTATION_WIDTH: f32 = 218.;
+const ROTATION_WIDTH: f32 = 169.;
 
 fn rotation_panel(
     ui: &mut Ui,
@@ -465,8 +705,8 @@ fn rotation_panel(
     focus_left: bool,
     tools: TransformTools,
 ) -> Option<TransformAction> {
-    ui.set_min_width(ROTATION_WIDTH);
-    ui.spacing_mut().item_spacing = vec2(8., 7.);
+    ui.set_width(ROTATION_WIDTH);
+    ui.spacing_mut().item_spacing = vec2(5., 4.);
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new("Rotation").strong().size(14.));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -537,34 +777,6 @@ fn rotation_panel(
 }
 
 impl Icon {
-    fn toolbar_label(self) -> &'static str {
-        match self {
-            Self::File => "File",
-            Self::OpenImage => "Open",
-            Self::OpenFolder => "Folder",
-            Self::Save | Self::SaveAs => "Save",
-            Self::Print => "Print",
-            Self::FolderPane => "Browse",
-            Self::Previous => "Prev",
-            Self::Next => "Next",
-            Self::ZoomOut => "Zoom−",
-            Self::Fit => "Fit",
-            Self::Actual => "Actual",
-            Self::ZoomIn => "Zoom+",
-            Self::Rotate | Self::RotateLeft => "Rotate",
-            Self::Crop => "Crop",
-            Self::FlipHorizontal | Self::FlipVertical => "Flip",
-            Self::Undo => "Undo",
-            Self::Copy => "Copy",
-            Self::Edit => "Bediz",
-            Self::Info => "Info",
-            Self::Fullscreen => "Screen",
-            Self::Play => "Slide",
-            Self::More => "More",
-            Self::Settings => "",
-        }
-    }
-
     fn ink(self, ui: &Ui) -> Color32 {
         let (light, dark) = match self {
             Self::OpenFolder | Self::FolderPane | Self::Edit | Self::Save | Self::SaveAs => {
@@ -576,7 +788,9 @@ impl Icon {
             | Self::Actual
             | Self::Fullscreen
             | Self::Print
-            | Self::Play => ([10, 108, 106], [116, 229, 215]),
+            | Self::Play
+            | Self::Stop
+            | Self::Transition => ([10, 108, 106], [116, 229, 215]),
             Self::Previous | Self::Next | Self::More | Self::Settings => {
                 ([58, 78, 123], [170, 190, 235])
             }
@@ -586,7 +800,7 @@ impl Icon {
             | Self::FlipHorizontal
             | Self::FlipVertical
             | Self::Undo => ([107, 61, 166], [203, 167, 255]),
-            Self::File | Self::OpenImage | Self::Copy | Self::Info => {
+            Self::File | Self::OpenImage | Self::Copy | Self::CopyResized | Self::Info => {
                 ([44, 84, 166], [149, 188, 255])
             }
         };
@@ -707,6 +921,18 @@ impl Icon {
                     Stroke::NONE,
                 ));
             }
+            Self::Stop => {
+                painter.rect_filled(
+                    Rect::from_min_max(point(5.5, 5.5), point(18.5, 18.5)),
+                    2,
+                    ink,
+                );
+            }
+            Self::Transition => {
+                line(&[(10., 16.), (3.5, 16.), (3.5, 5.5), (16.5, 5.5), (16.5, 8.)]);
+                outline(8., 9.5, 21., 20.);
+                line(&[(16.5, 12.2), (19., 14.75), (16.5, 17.3)]);
+            }
             Self::More => {
                 dot(5., 12., 1.45);
                 dot(12., 12., 1.45);
@@ -792,6 +1018,12 @@ impl Icon {
                     (15.5, 7.5),
                 ]);
                 outline(8.1, 8.1, 20.5, 20.5);
+            }
+            Self::CopyResized => {
+                line(&[(6., 16.5), (3.5, 16.5), (3.5, 3.5), (16.5, 3.5), (16.5, 6.)]);
+                outline(8.1, 8.1, 20.5, 20.5);
+                line(&[(17., 11.5), (11.5, 17.)]);
+                line(&[(11.5, 13.), (11.5, 17.), (15.5, 17.)]);
             }
             Self::Edit => {
                 line(&[
@@ -954,6 +1186,38 @@ mod tests {
         frame(1.45, vec![click(item, true)], false);
         frame(1.5, vec![click(item, false)], false);
         assert_eq!(opened, 2);
+    }
+
+    #[test]
+    fn submenu_content_fits_compact_frames() {
+        egui::__run_test_ui(|ui| {
+            let frame = theme::menu_frame(ui.style());
+            let zoom = frame.show(ui, |ui| {
+                ui.set_width(COMPACT_MENU_WIDTH);
+                menu_item(ui, Icon::ZoomIn, "Zoom In", true, "");
+                menu_item(ui, Icon::Actual, "Actual Pixels", true, "");
+            });
+            let file = frame.show(ui, |ui| {
+                ui.set_width(COMPACT_MENU_WIDTH);
+                menu_item(ui, Icon::OpenImage, "Open Image…", true, "Ctrl+O");
+                menu_item(ui, Icon::OpenFolder, "Open Folder…", true, "");
+            });
+            let rotate = frame.show(ui, |ui| {
+                let accent = Icon::Rotate.ink(ui);
+                rotation_panel(
+                    ui,
+                    &mut Canvas::default(),
+                    accent,
+                    false,
+                    TransformTools::default(),
+                );
+            });
+            for width in [zoom.response.rect.width(), file.response.rect.width()] {
+                assert!((150. ..=180.).contains(&width), "submenu width {width}");
+            }
+            let width = rotate.response.rect.width();
+            assert!((170. ..=190.).contains(&width), "Rotate width {width}");
+        });
     }
 
     #[test]

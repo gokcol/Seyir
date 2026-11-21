@@ -4,6 +4,30 @@ use eframe::egui::{self, Color32, Stroke};
 
 pub(crate) const CANVAS_INK: Color32 = Color32::from_rgb(219, 224, 236);
 
+pub(crate) fn install_ui_font(ctx: &egui::Context) {
+    #[cfg(target_os = "macos")]
+    let path = std::path::PathBuf::from("/System/Library/Fonts/Helvetica.ttc");
+    #[cfg(target_os = "windows")]
+    let path = std::env::var_os("WINDIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows"))
+        .join("Fonts")
+        .join("segoeui.ttf");
+    if let Ok(bytes) = std::fs::read(path) {
+        let mut fonts = egui::FontDefinitions::default();
+        let family = "system-ui".to_owned();
+        fonts
+            .font_data
+            .insert(family.clone(), egui::FontData::from_owned(bytes).into());
+        fonts
+            .families
+            .entry(egui::FontFamily::Proportional)
+            .or_default()
+            .insert(0, family);
+        ctx.set_fonts(fonts);
+    }
+}
+
 pub(crate) fn selected_tool_colors(
     surface: Color32,
     tone: Color32,
@@ -60,6 +84,7 @@ fn palette(layout: Layout, dark: bool) -> [Color32; 8] {
 
 pub(crate) fn apply(ctx: &egui::Context, layout: Layout) {
     ctx.all_styles_mut(|style| {
+        style.spacing.menu_margin = egui::Margin::same(5);
         let visual = &mut style.visuals;
         let [panel, surface, muted, border, accent, selection, ink, _] =
             palette(layout, visual.dark_mode);
@@ -70,6 +95,14 @@ pub(crate) fn apply(ctx: &egui::Context, layout: Layout) {
         visual.weak_text_color = Some(muted);
         visual.override_text_color = Some(ink);
         visual.window_stroke = Stroke::new(1.0_f32, border);
+        visual.window_corner_radius = egui::CornerRadius::same(7);
+        visual.menu_corner_radius = egui::CornerRadius::same(6);
+        visual.popup_shadow = egui::epaint::Shadow {
+            offset: [0, 5],
+            blur: 18,
+            spread: 0,
+            color: Color32::from_black_alpha(if visual.dark_mode { 135 } else { 58 }),
+        };
         visual.selection.bg_fill = selection;
         visual.selection.stroke = Stroke::new(1.0_f32, accent);
         visual.hyperlink_color = accent;
@@ -83,6 +116,7 @@ pub(crate) fn apply(ctx: &egui::Context, layout: Layout) {
             widget.fg_stroke.color = ink;
             widget.bg_fill = surface;
             widget.weak_bg_fill = surface;
+            widget.corner_radius = egui::CornerRadius::same(4);
         }
         visual.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, border);
         visual.widgets.hovered.bg_fill = selection;
@@ -109,11 +143,16 @@ pub(crate) fn bar(ctx: &egui::Context, margin: i8) -> egui::Frame {
 }
 
 pub(crate) fn floating(ctx: &egui::Context) -> egui::Frame {
-    let style = ctx.style();
-    egui::Frame::popup(&style)
-        .fill(style.visuals.panel_fill)
-        .corner_radius(12)
-        .inner_margin(egui::Margin::same(8))
+    menu_frame(&ctx.style()).inner_margin(egui::Margin::same(8))
+}
+
+pub(crate) fn menu_frame(style: &egui::Style) -> egui::Frame {
+    egui::Frame::menu(style)
+}
+
+pub(crate) fn menu_style(style: &mut egui::Style) {
+    egui::containers::menu::menu_style(style);
+    style.spacing.item_spacing.y = 1.;
 }
 
 fn rgb(hex: u32) -> Color32 {

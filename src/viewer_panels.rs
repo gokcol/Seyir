@@ -145,27 +145,31 @@ pub(crate) fn glyph(ui: &egui::Ui, rect: Rect, kind: Glyph, ink: Color32) {
 
 pub(crate) fn dialog_title(ui: &mut egui::Ui, icon: Glyph, title: &str, subtitle: Option<&str>) {
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 12.;
-        let (badge, _) = ui.allocate_exact_size(Vec2::splat(46.), Sense::hover());
+        ui.spacing_mut().item_spacing.x = 11.;
+        let (badge, _) = ui.allocate_exact_size(Vec2::splat(40.), Sense::hover());
         let visual = ui.visuals();
         let accent = visual.selection.stroke.color;
-        let (face, ink) =
+        let (_, ink) =
             crate::theme::selected_tool_colors(visual.panel_fill, accent, visual.text_color());
+        let face = visual.selection.bg_fill;
         ui.painter().rect(
             badge,
-            13,
+            7,
             face,
-            Stroke::new(1.0_f32, face.lerp_to_gamma(accent, 0.2)),
+            Stroke::new(1.0_f32, face.lerp_to_gamma(accent, 0.27)),
             egui::StrokeKind::Inside,
         );
-        glyph(ui, badge.shrink(10.), icon, ink);
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = 2.;
-            ui.add(egui::Label::new(RichText::new(title).size(19.).strong()).wrap());
-            if let Some(subtitle) = subtitle {
+        glyph(ui, badge.shrink(6.), icon, ink);
+        let heading = egui::Label::new(RichText::new(title).size(20.).strong()).wrap();
+        if let Some(subtitle) = subtitle {
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.;
+                ui.add(heading);
                 ui.add(egui::Label::new(RichText::new(subtitle).size(12.).weak()).wrap());
-            }
-        });
+            });
+        } else {
+            ui.add(heading);
+        }
     });
 }
 
@@ -175,21 +179,53 @@ pub(crate) fn dialog_button(
     label: &str,
     primary: bool,
 ) -> egui::Response {
+    dialog_control(ui, icon, label, primary, None)
+}
+
+pub(super) fn dialog_tab(
+    ui: &mut egui::Ui,
+    icon: Glyph,
+    label: &str,
+    selected: bool,
+) -> egui::Response {
+    dialog_control(ui, icon, label, selected, Some(selected))
+}
+
+fn dialog_control(
+    ui: &mut egui::Ui,
+    icon: Glyph,
+    label: &str,
+    highlighted: bool,
+    tab: Option<bool>,
+) -> egui::Response {
     let visual = ui.visuals();
     let text_ink = visual.text_color();
-    let font = FontId::proportional(12.5);
-    let label = ui.painter().layout_no_wrap(label.into(), font, text_ink);
-    let width = (label.size().x + 46.).max(86.);
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 35.), Sense::click());
+    let caption = ui
+        .painter()
+        .layout_no_wrap(label.into(), FontId::proportional(12.5), text_ink);
+    let width = if tab.is_some() {
+        ui.available_width()
+    } else {
+        (caption.size().x + 43.).max(80.)
+    };
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, 33.), Sense::click());
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &label.job.text)
+        if let Some(selected) = tab {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::SelectableLabel,
+                ui.is_enabled(),
+                selected,
+                label,
+            )
+        } else {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
+        }
     });
     let visual = ui.visuals();
     let accent = visual.selection.stroke.color;
-    let (accent_face, icon_ink) =
-        crate::theme::selected_tool_colors(visual.panel_fill, accent, text_ink);
-    let base = if primary {
-        accent_face
+    let (_, icon_ink) = crate::theme::selected_tool_colors(visual.panel_fill, accent, text_ink);
+    let base = if highlighted {
+        visual.selection.bg_fill
     } else {
         visual.window_fill()
     };
@@ -202,32 +238,33 @@ pub(crate) fn dialog_button(
     };
     let edge = if response.has_focus() {
         visual.selection.stroke
-    } else if primary {
-        Stroke::new(1.0_f32, base.lerp_to_gamma(accent, 0.28))
+    } else if highlighted {
+        Stroke::new(1.0_f32, base.lerp_to_gamma(accent, 0.55))
     } else {
         visual.window_stroke
     };
     ui.painter()
-        .rect(rect, 8, fill, edge, egui::StrokeKind::Inside);
-    let start = rect.center().x - (label.size().x + 25.) * 0.5;
+        .rect(rect, 6, fill, edge, egui::StrokeKind::Inside);
+    let start = rect.center().x - (caption.size().x + 25.) * 0.5;
     let icon_rect =
         Rect::from_center_size(Pos2::new(start + 9., rect.center().y), Vec2::splat(18.));
     glyph(
         ui,
         icon_rect,
         icon,
-        if primary { icon_ink } else { text_ink },
+        if highlighted { icon_ink } else { text_ink },
     );
-    let label_pos = Pos2::new(start + 25., rect.center().y - label.size().y * 0.5);
-    ui.painter().galley(label_pos, label, text_ink);
+    let label_pos = Pos2::new(start + 25., rect.center().y - caption.size().y * 0.5);
+    ui.painter().galley(label_pos, caption, text_ink);
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 pub(super) fn setting_switch(ui: &mut egui::Ui, icon: Glyph, label: &str, enabled: &mut bool) {
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 33.), Sense::click());
+    let (rect, mut response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.), Sense::click());
     if response.clicked() {
         *enabled = !*enabled;
+        response.mark_changed();
     }
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *enabled, label)
@@ -243,41 +280,44 @@ pub(super) fn setting_switch(ui: &mut egui::Ui, icon: Glyph, label: &str, enable
     };
     if response.hovered() || response.has_focus() {
         ui.painter()
-            .rect(rect, 8, tint, focus, egui::StrokeKind::Inside);
+            .rect(rect, 6, tint, focus, egui::StrokeKind::Inside);
     }
     glyph(
         ui,
-        Rect::from_center_size(rect.left_center() + Vec2::new(18., 0.), Vec2::splat(18.)),
+        Rect::from_center_size(rect.left_center() + Vec2::new(12., 0.), Vec2::splat(18.)),
         icon,
         ink,
     );
     ui.painter().text(
-        rect.left_center() + Vec2::new(36., 0.),
+        rect.left_center() + Vec2::new(28., 0.),
         Align2::LEFT_CENTER,
         label,
         FontId::proportional(13.),
         visual.text_color(),
     );
-    let pill = Rect::from_center_size(
-        rect.right_center() - Vec2::new(23., 0.),
+    let track = Rect::from_center_size(
+        rect.right_center() - Vec2::new(18., 0.),
         Vec2::new(30., 17.),
     );
-    let track = if *enabled { ink } else { visual.window_fill() };
+    let fill = if *enabled { ink } else { visual.window_fill() };
     let border = if *enabled {
         Stroke::NONE
     } else {
         visual.window_stroke
     };
-    let dot = if *enabled {
+    let thumb = if *enabled {
         visual.panel_fill
     } else {
         visual.weak_text_color()
     };
     ui.painter()
-        .rect(pill, 9, track, border, egui::StrokeKind::Inside);
+        .rect(track, 5, fill, border, egui::StrokeKind::Inside);
     let offset = if *enabled { 6.5 } else { -6.5 };
-    ui.painter()
-        .circle_filled(pill.center() + Vec2::new(offset, 0.), 5., dot);
+    ui.painter().rect_filled(
+        Rect::from_center_size(track.center() + Vec2::new(offset, 0.), Vec2::splat(9.)),
+        2,
+        thumb,
+    );
     response.on_hover_cursor(egui::CursorIcon::PointingHand);
 }
 

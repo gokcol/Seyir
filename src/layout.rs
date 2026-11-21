@@ -57,8 +57,12 @@ impl Layout {
         }
     }
 
-    pub(crate) fn shows_folder_by_default(self) -> bool {
-        !matches!(self, Self::FocusMode | Self::FloatingControls)
+    pub(crate) fn uses_floating_browser(self) -> bool {
+        matches!(self, Self::FocusMode | Self::FloatingControls)
+    }
+
+    pub(crate) fn initial_folder_visibility(self, docked_preference: Option<bool>) -> bool {
+        !self.uses_floating_browser() && docked_preference.unwrap_or(true)
     }
 }
 
@@ -201,17 +205,25 @@ fn preference_path() -> Option<PathBuf> {
 
 pub(crate) fn choices(ui: &mut Ui, current: Layout) -> Option<Layout> {
     let mut selection = None;
-    for layout in Layout::ALL {
-        if choice(ui, layout, current) && layout != current {
-            selection = Some(layout);
+    ui.scope(|ui| {
+        let gap = 7.;
+        let width = (ui.available_width() - 2. * gap) / 3.;
+        ui.spacing_mut().item_spacing = vec2(gap, gap);
+        for row in Layout::ALL.chunks(3) {
+            ui.horizontal(|ui| {
+                for &layout in row {
+                    if choice(ui, layout, current, width) && layout != current {
+                        selection = Some(layout);
+                    }
+                }
+            });
         }
-    }
+    });
     selection
 }
 
-fn choice(ui: &mut Ui, layout: Layout, current: Layout) -> bool {
-    let (rect, response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), 44.), egui::Sense::click());
+fn choice(ui: &mut Ui, layout: Layout, current: Layout, width: f32) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 59.), egui::Sense::click());
     let selected = layout == current;
     response.widget_info(|| {
         egui::WidgetInfo::selected(
@@ -223,61 +235,62 @@ fn choice(ui: &mut Ui, layout: Layout, current: Layout) -> bool {
     });
     let visual = ui.visuals();
     let accent = visual.selection.stroke.color;
-    let (selected_fill, selected_ink) =
-        theme::selected_tool_colors(visual.window_fill(), accent, visual.text_color());
-    let diagram_ink = if selected { selected_ink } else { accent };
-    let interaction = ui.style().interact(&response);
-    if selected || response.hovered() || response.has_focus() {
-        let fill = if selected {
-            selected_fill
-        } else {
-            interaction.weak_bg_fill
-        };
-        let stroke = if response.has_focus() {
-            visual.selection.stroke
-        } else {
-            Stroke::NONE
-        };
-        ui.painter().rect(rect, 8, fill, stroke, StrokeKind::Inside);
-    }
-    diagram(ui, layout, rect.left_center() + vec2(18., 0.), diagram_ink);
+    let surface = visual.window_fill();
+    let (tint, ink) = theme::selected_tool_colors(surface, accent, visual.text_color());
+    let fill = if selected {
+        visual.selection.bg_fill
+    } else if response.hovered() {
+        tint
+    } else {
+        surface
+    };
+    let border = if response.has_focus() {
+        Stroke::new(1.8_f32, accent)
+    } else if selected {
+        visual.selection.stroke
+    } else {
+        visual.window_stroke
+    };
+    ui.painter().rect(rect, 6, fill, border, StrokeKind::Inside);
+    diagram(ui, layout, rect.center_top() + vec2(0., 23.), tint, ink);
     ui.painter().text(
-        rect.left_top() + vec2(36., 7.),
-        egui::Align2::LEFT_TOP,
+        rect.center_bottom() - vec2(0., 7.),
+        egui::Align2::CENTER_BOTTOM,
         layout.name(),
-        FontId::proportional(13.),
+        FontId::proportional(11.),
         visual.text_color(),
     );
-    ui.painter().text(
-        rect.left_top() + vec2(36., 25.),
-        egui::Align2::LEFT_TOP,
-        layout.description(),
-        FontId::proportional(10.5),
-        visual.weak_text_color(),
-    );
     if selected {
-        let center = rect.right_center() - vec2(12., 0.);
+        let center = rect.right_top() + vec2(-12., 11.);
         ui.painter().add(egui::Shape::line(
             vec![
-                center + vec2(-4., 0.),
-                center + vec2(-1., 3.),
-                center + vec2(4.5, -3.5),
+                center + vec2(-3.5, 0.),
+                center + vec2(-1., 2.5),
+                center + vec2(3.5, -2.5),
             ],
-            Stroke::new(1.5_f32, diagram_ink),
+            Stroke::new(1.45_f32, ink),
         ));
     }
     response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(layout.description())
         .clicked()
 }
 
-fn diagram(ui: &Ui, layout: Layout, center: egui::Pos2, accent: Color32) {
+fn diagram(ui: &Ui, layout: Layout, center: egui::Pos2, fill: Color32, ink: Color32) {
     let picture = ui.painter();
-    let frame = Rect::from_center_size(center, vec2(19., 15.));
-    picture.rect_stroke(frame, 2, Stroke::new(1.25_f32, accent), StrokeKind::Inside);
+    let scale = 1.65;
+    let frame = Rect::from_center_size(center, vec2(19., 15.) * scale);
+    picture.rect(
+        frame,
+        3,
+        fill,
+        Stroke::new(1.4_f32, ink),
+        StrokeKind::Inside,
+    );
     let block = |x, y, w, h| {
-        let at = frame.min + vec2(x, y);
-        picture.rect_filled(Rect::from_min_size(at, vec2(w, h)), 0.6, accent);
+        let at = frame.min + vec2(x, y) * scale;
+        picture.rect_filled(Rect::from_min_size(at, vec2(w, h) * scale), 0.9, ink);
     };
     match layout {
         Layout::StudioDesk => {
@@ -311,6 +324,16 @@ fn diagram(ui: &Ui, layout: Layout, center: egui::Pos2, accent: Color32) {
 #[cfg(test)]
 mod tests {
     use super::{Layout, Preferences};
+
+    #[test]
+    fn floating_browsers_start_hidden_with_existing_docked_preferences() {
+        for layout in [Layout::FocusMode, Layout::FloatingControls] {
+            assert!(!layout.initial_folder_visibility(None));
+            assert!(!layout.initial_folder_visibility(Some(true)));
+        }
+        assert!(Layout::StudioDesk.initial_folder_visibility(None));
+        assert!(!Layout::StudioDesk.initial_folder_visibility(Some(false)));
+    }
 
     #[test]
     fn layout_preference_survives_replacement_and_defaults_when_missing_or_invalid() {

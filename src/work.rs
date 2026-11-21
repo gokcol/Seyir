@@ -3,12 +3,14 @@ use crate::decode::{self, Decoded};
 use std::{
     cmp::Ordering,
     collections::VecDeque,
+    ffi::OsStr,
     fs,
     path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex},
     thread,
     time::SystemTime,
 };
+use unicode_normalization::{UnicodeNormalization, is_nfc};
 
 struct Pending<T> {
     job: Option<T>,
@@ -152,6 +154,15 @@ pub struct Entry {
     modified: Option<SystemTime>,
 }
 
+pub fn display_name(name: &OsStr) -> String {
+    let text = name.to_string_lossy();
+    if is_nfc(&text) {
+        text.into_owned()
+    } else {
+        text.nfc().collect()
+    }
+}
+
 pub fn folder(path: &Path) -> Result<Vec<Entry>, String> {
     let folders = fs::read_dir(path).map_err(|error| format!("Cannot open folder: {error}"))?;
     let mut entries = Vec::new();
@@ -171,7 +182,7 @@ pub fn folder(path: &Path) -> Result<Vec<Entry>, String> {
         }
         entries.push(Entry {
             path,
-            name: name.to_string_lossy().into_owned(),
+            name: display_name(&name),
             directory,
             modified: entry.metadata().ok().and_then(|info| info.modified().ok()),
         });
@@ -231,6 +242,32 @@ fn natural(left: &str, right: &str) -> Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalizes_turkish_labels_and_preserves_folder_paths() {
+        let root = tempfile::tempdir().unwrap();
+        for label in ["Bahçeşehir Üniversitesi", "Işık ve İstanbul"] {
+            let decomposed: String = label.nfd().collect();
+            fs::create_dir(root.path().join(&decomposed)).unwrap();
+        }
+        let entries = folder(root.path()).unwrap();
+        assert_eq!(entries.len(), 2);
+        for entry in entries {
+            assert!(entry.directory && entry.path.is_dir());
+            let filename = entry.path.file_name().unwrap();
+            assert!(
+                fs::read_dir(root.path())
+                    .unwrap()
+                    .flatten()
+                    .any(|actual| actual.file_name() == filename)
+            );
+            assert!(matches!(
+                entry.name.as_str(),
+                "Bahçeşehir Üniversitesi" | "Işık ve İstanbul"
+            ));
+            assert_eq!(entry.name, display_name(filename));
+        }
+    }
 
     #[test]
     fn filenames_sort_numerically_without_overflow() {

@@ -1,6 +1,6 @@
 # Seyir 1.0
 
-Seyir is a native image viewer for macOS and Windows. Open one image and use the arrow keys to browse its neighbors. **Show Folder** opens a sidebar with thumbnails and selects the image already on screen.
+Seyir is a native image viewer for macOS and Windows. Open one image and use the arrow keys to browse its neighbors. **Show Folder Browser** opens the thumbnails and selects the image already on screen. In **Focus Mode** and **Floating Controls**, the browser starts hidden and opens as a vertical panel from the folder icon on the floating toolbar.
 
 - Hover over **File** to open an image or folder, save, export, or print. You can also drop an image into the window or open it from Finder or Explorer. The folder browser starts at your home folder and follows the parent of the image you open.
 - **← / →** browse files in the folder using the selected order. The folder sidebar can sort by natural filename order or most recently modified.

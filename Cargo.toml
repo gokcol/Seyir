@@ -17,6 +17,7 @@ resvg = { version = "=0.45.1", default-features = false, features = ["text", "ra
 rfd = { version = "=0.17.2", default-features = false }
 roxmltree = "=0.20.0"
 tempfile = "=3.27.0"
+unicode-normalization = "=0.1.25"
 wgpu = { version = "=27.0.1", default-features = false, features = ["metal", "dx12", "wgsl"] }
 winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }
 

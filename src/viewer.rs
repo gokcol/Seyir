@@ -203,6 +203,7 @@ pub struct Viewer {
 impl Viewer {
     pub fn new(creation: &eframe::CreationContext<'_>, incoming: OpenQueue) -> Self {
         let ctx = &creation.egui_ctx;
+        crate::theme::install_ui_font(ctx);
         ctx.options_mut(|options| options.zoom_with_keyboard = false);
         let preferences = Preferences::load();
         let layout = preferences.layout;
@@ -312,9 +313,7 @@ impl Viewer {
                 visible: preferences.image_info,
                 ..InfoPane::default()
             },
-            browser: preferences
-                .folder
-                .unwrap_or(layout.shows_folder_by_default()),
+            browser: layout.initial_folder_visibility(preferences.folder),
             folder_preference: preferences.folder,
             sort_newest: false,
             focus_folder_file: false,
@@ -644,17 +643,17 @@ impl Viewer {
             return;
         }
         self.browser = visible;
-        self.folder_preference = Some(visible);
         self.focus_folder_file = true;
-        self.persist_settings();
+        if !self.layout.uses_floating_browser() {
+            self.folder_preference = Some(visible);
+            self.persist_settings();
+        }
     }
 
     fn change_layout(&mut self, ctx: &egui::Context, layout: Layout) {
         self.layout = layout;
         crate::theme::apply(ctx, layout);
-        self.browser = self
-            .folder_preference
-            .unwrap_or(layout.shows_folder_by_default());
+        self.browser = layout.initial_folder_visibility(self.folder_preference);
         self.focus_folder_file = true;
         self.persist_settings();
     }
@@ -1311,8 +1310,8 @@ impl Viewer {
     }
 
     fn settings(&mut self, ctx: &egui::Context) {
-        use panel_ui::{Glyph, dialog_button, dialog_title};
-        let frame = crate::theme::floating(ctx).inner_margin(egui::Margin::same(18));
+        use panel_ui::{Glyph, dialog_button, dialog_tab, dialog_title, setting_switch};
+        let frame = crate::theme::floating(ctx).inner_margin(egui::Margin::same(16));
         let mut browser = self.browser;
         let mut image_info = self.info.visible;
         let mut browse_transition = self.browse_transition_default;
@@ -1322,19 +1321,25 @@ impl Viewer {
             .show(ctx, |ui| {
                 ui.set_width(338.);
                 dialog_title(ui, Glyph::Settings, "Settings", None);
-                ui.add_space(10.);
-                ui.horizontal(|ui| {
-                    if dialog_button(ui, Glyph::Interface, "Interface", !self.settings_playback)
-                        .clicked()
+                ui.add_space(9.);
+                ui.columns_const(|[interface, playback]| {
+                    if dialog_tab(
+                        interface,
+                        Glyph::Interface,
+                        "Interface",
+                        !self.settings_playback,
+                    )
+                    .clicked()
                     {
                         self.settings_playback = false;
                     }
-                    if dialog_button(ui, Glyph::Play, "Playback", self.settings_playback).clicked()
+                    if dialog_tab(playback, Glyph::Play, "Playback", self.settings_playback)
+                        .clicked()
                     {
                         self.settings_playback = true;
                     }
                 });
-                ui.add_space(6.);
+                ui.add_space(9.);
                 let selected = egui::ScrollArea::vertical()
                     .auto_shrink([false, true])
                     .max_height((ctx.content_rect().height() - 158.).max(160.))
@@ -1351,35 +1356,34 @@ impl Viewer {
                             });
                             ui.add_space(8.);
                             ui.separator();
-                            ui.strong("Slideshow defaults");
-                            ui.horizontal_wrapped(|ui| {
-                                slideshow_controls(
+                            ui.strong("Slideshow");
+                            ui.horizontal(|ui| {
+                                ui.label("Interval");
+                                ui.add(
+                                    egui::DragValue::new(&mut slideshow.seconds)
+                                        .range(1..=60)
+                                        .suffix(" s"),
+                                );
+                                ui.add_space(8.);
+                                ui.label("Transition");
+                                transition_picker(
                                     ui,
-                                    &mut slideshow,
                                     "slideshow-default-transition",
+                                    &mut slideshow.transition,
                                 );
                             });
+                            setting_switch(ui, Glyph::Refresh, "Loop", &mut slideshow.repeat);
                             return None;
                         }
-                        ui.strong("Interface layout");
+                        ui.strong("Layout");
                         ui.add_space(3.);
                         let selected = layout::choices(ui, self.layout);
                         ui.add_space(8.);
                         ui.separator();
                         ui.strong("Panels");
                         ui.add_space(3.);
-                        panel_ui::setting_switch(
-                            ui,
-                            panel_ui::Glyph::Folder,
-                            "Folder browser",
-                            &mut browser,
-                        );
-                        panel_ui::setting_switch(
-                            ui,
-                            panel_ui::Glyph::Info,
-                            "Image properties",
-                            &mut image_info,
-                        );
+                        setting_switch(ui, Glyph::Folder, "Folder browser", &mut browser);
+                        setting_switch(ui, Glyph::Info, "Image properties", &mut image_info);
                         selected
                     })
                     .inner;
@@ -1415,13 +1419,17 @@ impl Viewer {
     fn toolbar(&mut self, ui: &mut egui::Ui, floating: bool) {
         use crate::chrome;
 
-        let width = ui.available_width();
-        chrome::row(ui, |ui| {
-            if !floating {
+        if floating {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 5.;
+                self.toolbar_tools(ui);
+            });
+        } else {
+            chrome::row(ui, |ui| {
                 chrome::brand(ui, &self.app_icon);
-            }
-            self.toolbar_tools(ui, !floating && width >= 870.);
-        });
+                self.toolbar_tools(ui);
+            });
+        }
     }
 
     fn tool_rail(&mut self, ui: &mut egui::Ui) {
@@ -1432,36 +1440,19 @@ impl Viewer {
         egui::ScrollArea::vertical()
             .id_salt("tool-rail-scroll")
             .show(ui, |ui| {
-                ui.vertical_centered(|ui| self.toolbar_tools(ui, false));
+                ui.vertical_centered(|ui| self.toolbar_tools(ui));
             });
     }
 
-    fn toolbar_tools(&mut self, ui: &mut egui::Ui, show_edit_caption: bool) {
+    fn toolbar_tools(&mut self, ui: &mut egui::Ui) {
         use crate::chrome::{self, Icon, Tile};
 
         let has_picture = self.picture.is_some();
         chrome::group(ui, |ui| {
             chrome::file_menu(ui, |ui| self.file_actions(ui));
-            let toggle = if self.browser {
-                "Hide Folder"
-            } else {
-                "Show Folder"
-            };
-            let hint = if self.browser {
-                "Hide Folder · Close the folder browser"
-            } else {
-                "Show Folder · Browse the current image’s parent folder"
-            };
-            if Tile::new(Icon::FolderPane, toggle)
-                .hint(hint)
-                .enabled(self.folder.is_some())
-                .selected(self.browser && self.folder.is_some())
-                .show(ui)
-                .clicked()
-            {
-                self.set_browser_visible(!self.browser);
-            }
+            self.folder_toggle(ui);
         });
+        ui.separator();
         chrome::group(ui, |ui| {
             if Tile::new(Icon::Previous, "Previous image")
                 .hint("Previous image · Left arrow")
@@ -1480,6 +1471,7 @@ impl Viewer {
                 self.navigate(true);
             }
         });
+        ui.separator();
         chrome::group(ui, |ui| {
             if Tile::new(Icon::ZoomOut, "Zoom out")
                 .enabled(has_picture)
@@ -1516,6 +1508,7 @@ impl Viewer {
                 self.apply_image_transform(ui.ctx(), action);
             }
         });
+        ui.separator();
         chrome::group(ui, |ui| {
             if chrome::copy_menu(ui, has_picture && !self.copying, |ui| self.copy_actions(ui))
                 .clicked()
@@ -1526,9 +1519,7 @@ impl Viewer {
                 if compatible {
                     let original = self.file.as_deref().is_some_and(bediz_original_supported)
                         && !self.has_pixel_edits();
-                    let edit = Tile::new(Icon::Edit, "Edit in Bediz")
-                        .caption(show_edit_caption)
-                        .enabled(has_picture);
+                    let edit = Tile::new(Icon::Edit, "Edit in Bediz").enabled(has_picture);
                     if original && self.canvas.angle == 0. {
                         if edit.show(ui).clicked() {
                             self.edit(ui.ctx(), false);
@@ -1548,7 +1539,6 @@ impl Viewer {
                     }
                 } else if Tile::new(Icon::Edit, "Copy and Open Bediz")
                     .hint("Copy and open Bediz · This Bediz build uses Paste to receive images")
-                    .caption(show_edit_caption)
                     .enabled(has_picture)
                     .show(ui)
                     .clicked()
@@ -1557,6 +1547,7 @@ impl Viewer {
                 }
             }
         });
+        ui.separator();
         chrome::group(ui, |ui| {
             if Tile::new(Icon::Play, "Start Slideshow")
                 .enabled(self.slideshow.is_none() && self.has_slideshow_images())
@@ -1597,7 +1588,7 @@ impl Viewer {
             return;
         };
         let folder_name = path_name(folder);
-        let folder_path = folder.display().to_string();
+        let folder_path = work::display_name(folder.as_os_str());
         panel_ui::title(
             ui,
             Glyph::Folder,
@@ -1655,10 +1646,23 @@ impl Viewer {
     }
 
     fn browser(&mut self, ui: &mut egui::Ui) {
+        self.browser_panel(ui, None);
+    }
+
+    fn browser_panel(&mut self, ui: &mut egui::Ui, max_list_height: Option<f32>) {
         use panel_ui::Glyph;
-        const ROW_HEIGHT: f32 = 43.;
-        self.folder_title(ui);
-        ui.add_space(9.);
+        let compact = max_list_height.is_some();
+        let row_height = if compact { 36. } else { 43. };
+        let thumb_side = if compact { 28. } else { 34. };
+        if compact {
+            if self.floating_folder_header(ui) {
+                self.set_browser_visible(false);
+                return;
+            }
+        } else {
+            self.folder_title(ui);
+        }
+        ui.add_space(if compact { 4. } else { 9. });
         if self.folder.is_none() {
             ui.weak("Open a folder to browse its images.");
             return;
@@ -1667,29 +1671,35 @@ impl Viewer {
             self.open_folder(parent);
             return;
         }
-        ui.add_space(5.);
+        ui.add_space(if compact { 2. } else { 5. });
         ui.separator();
-        ui.add_space(3.);
+        ui.add_space(if compact { 1. } else { 3. });
 
         let mut missing = Vec::new();
         let mut scroll = egui::ScrollArea::vertical().id_salt("folder-list");
+        if let Some(height) = max_list_height {
+            scroll = scroll.max_height(height);
+        }
         if self.focus_folder_file {
             if let Some(index) = self.current_index() {
-                let row_height = ROW_HEIGHT + ui.spacing().item_spacing.y;
+                let row_stride = row_height + ui.spacing().item_spacing.y;
+                let viewport_height = max_list_height
+                    .unwrap_or(ui.available_height())
+                    .min(ui.available_height());
                 scroll = scroll.vertical_scroll_offset(
-                    (index as f32 * row_height - ui.available_height() / 2.).max(0.),
+                    (index as f32 * row_stride - viewport_height / 2.).max(0.),
                 );
             }
             self.focus_folder_file = false;
         }
-        let clicked = scroll.show_rows(ui, ROW_HEIGHT, self.entries.len(), |ui, rows| {
+        let clicked = scroll.show_rows(ui, row_height, self.entries.len(), |ui, rows| {
             let mut chosen = None;
             for entry in &self.entries[rows] {
                 let selected = self.file.as_ref() == Some(&entry.path);
                 let response = ui
                     .push_id(&entry.path, |ui| {
                         let (rect, response) = ui.allocate_exact_size(
-                            egui::vec2(ui.available_width(), ROW_HEIGHT),
+                            egui::vec2(ui.available_width(), row_height),
                             egui::Sense::click(),
                         );
                         response.widget_info(|| {
@@ -1706,7 +1716,7 @@ impl Viewer {
                         if selected || active || response.has_focus() {
                             ui.painter().rect(
                                 rect,
-                                8,
+                                if compact { 5 } else { 8 },
                                 if selected {
                                     visuals.selection.bg_fill
                                 } else {
@@ -1722,26 +1732,27 @@ impl Viewer {
                         }
                         if selected {
                             let rail = egui::Rect::from_min_size(
-                                rect.left_center() + egui::vec2(0., -12.),
-                                egui::vec2(2.5, 24.),
+                                rect.left_center() + egui::vec2(0., -(thumb_side - 10.) * 0.5),
+                                egui::vec2(2.5, thumb_side - 10.),
                             );
                             ui.painter().rect_filled(rail, 2, accent);
                         }
                         let preview = egui::Rect::from_center_size(
-                            rect.left_center() + egui::vec2(23., 0.),
-                            Vec2::splat(34.),
+                            rect.left_center() + egui::vec2(6. + thumb_side * 0.5, 0.),
+                            Vec2::splat(thumb_side),
                         );
                         let thumb_bg = if active {
                             visuals.widgets.hovered.weak_bg_fill
                         } else {
                             visuals.faint_bg_color
                         };
-                        ui.painter().rect_filled(preview, 7, thumb_bg);
+                        ui.painter()
+                            .rect_filled(preview, if compact { 5 } else { 7 }, thumb_bg);
                         if entry.directory {
                             panel_ui::glyph(ui, preview.shrink(7.), Glyph::Folder, accent);
                         } else if let Some(Some(texture)) = self.thumbnails.images.get(&entry.path)
                         {
-                            let factor = 31. / texture.size_vec2().max_elem();
+                            let factor = (thumb_side - 3.) / texture.size_vec2().max_elem();
                             let fitted = egui::Rect::from_center_size(
                                 preview.center(),
                                 texture.size_vec2() * factor,
@@ -1768,7 +1779,7 @@ impl Viewer {
 
                         let trailing = if entry.directory { 22. } else { 8. };
                         let name_rect = egui::Rect::from_min_max(
-                            rect.left_top() + egui::vec2(49., 0.),
+                            rect.left_top() + egui::vec2(15. + thumb_side, 0.),
                             rect.right_bottom() - egui::vec2(trailing, 0.),
                         );
                         panel_ui::clipped_text(
@@ -2151,7 +2162,6 @@ impl Viewer {
         let mut canvas_frame = egui::Frame::new().fill(theme::canvas(ctx, layout));
         if layout == Layout::FocusMode {
             canvas_frame = canvas_frame.inner_margin(egui::Margin {
-                top: if folder { 122 } else { 0 },
                 bottom: if ctx.content_rect().width() < 654. {
                     108
                 } else {
@@ -2165,7 +2175,7 @@ impl Viewer {
             .show(ctx, |ui| self.image_stage(ui, false))
             .response
             .rect;
-        if folder && matches!(layout, Layout::FocusMode | Layout::FloatingControls) {
+        if folder && layout.uses_floating_browser() {
             self.floating_folder(ctx, stage);
         }
         if layout == Layout::FocusMode {
@@ -2238,16 +2248,45 @@ impl Viewer {
     fn floating_folder(&mut self, ctx: &egui::Context, stage: egui::Rect) {
         use crate::theme;
 
+        let list_height = (stage.height() * 0.60 - 71.).clamp(72., 305.);
         egui::Area::new(egui::Id::new("focus-folder"))
             .order(egui::Order::Foreground)
             .fixed_pos(stage.left_top() + egui::vec2(10., 10.))
             .constrain_to(stage)
             .show(ctx, |ui| {
                 theme::floating(ctx).show(ui, |ui| {
-                    ui.set_width((stage.width() - 38.).clamp(290., 482.));
-                    self.thumbnail_browser(ui, false);
+                    ui.set_width(212.);
+                    self.browser_panel(ui, Some(list_height));
                 });
             });
+    }
+
+    fn floating_folder_header(&self, ui: &mut egui::Ui) -> bool {
+        use panel_ui::Glyph;
+
+        let name = self
+            .folder
+            .as_deref()
+            .map_or_else(|| "Folder".into(), path_name);
+        ui.horizontal(|ui| {
+            let (icon, _) = ui.allocate_exact_size(egui::vec2(22., 26.), egui::Sense::hover());
+            panel_ui::glyph(
+                ui,
+                icon.shrink(3.),
+                Glyph::Folder,
+                ui.visuals().selection.stroke.color,
+            );
+            let name_width = (ui.available_width() - 28. - ui.spacing().item_spacing.x).max(1.);
+            let title = ui.add_sized(
+                [name_width, 28.],
+                egui::Label::new(RichText::new(name).size(13.).strong()).truncate(),
+            );
+            if let Some(folder) = &self.folder {
+                title.on_hover_text(work::display_name(folder.as_os_str()));
+            }
+            panel_ui::action(ui, Glyph::Close, "Hide folder browser", None, false).clicked()
+        })
+        .inner
     }
 
     fn focus_tools(&mut self, ctx: &egui::Context, stage: egui::Rect) {
@@ -2260,14 +2299,31 @@ impl Viewer {
             .constrain_to(stage)
             .show(ctx, |ui| {
                 theme::floating(ctx).show(ui, |ui| {
-                    ui.set_width((stage.width() - 36.).clamp(300., 636.));
                     self.toolbar(ui, true);
                 });
             });
     }
 
-    fn floating_controls(&mut self, ctx: &egui::Context, stage: egui::Rect) {
+    fn folder_toggle(&mut self, ui: &mut egui::Ui) {
         use crate::chrome::{Icon, Tile};
+
+        let label = if self.browser {
+            "Hide Folder Browser"
+        } else {
+            "Show Folder Browser"
+        };
+        if Tile::new(Icon::FolderPane, label)
+            .enabled(self.folder.is_some())
+            .selected(self.browser && self.folder.is_some())
+            .show(ui)
+            .clicked()
+        {
+            self.set_browser_visible(!self.browser);
+        }
+    }
+
+    fn floating_controls(&mut self, ctx: &egui::Context, stage: egui::Rect) {
+        use crate::chrome::{self, FloatingTool, Icon, Tile};
         use crate::theme;
 
         let popup_id = egui::Id::new("floating-options");
@@ -2280,21 +2336,16 @@ impl Viewer {
             .constrain_to(stage)
             .show(ctx, |ui| {
                 theme::floating(ctx)
-                    .corner_radius(16)
-                    .inner_margin(egui::Margin::symmetric(9, 5))
+                    .inner_margin(egui::Margin::symmetric(7, 4))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 3.;
                             if !has_picture
-                                && Tile::new(Icon::OpenImage, "Open Image…")
-                                    .icon_only()
-                                    .show(ui)
-                                    .clicked()
+                                && Tile::new(Icon::OpenImage, "Open Image…").show(ui).clicked()
                             {
                                 self.pick(PickKind::Image);
                             }
                             if Tile::new(Icon::ZoomOut, "Zoom Out")
-                                .icon_only()
                                 .enabled(has_picture)
                                 .show(ui)
                                 .clicked()
@@ -2302,7 +2353,6 @@ impl Viewer {
                                 self.canvas.step_zoom(0.8);
                             }
                             if Tile::new(Icon::ZoomIn, "Zoom In")
-                                .icon_only()
                                 .enabled(has_picture)
                                 .show(ui)
                                 .clicked()
@@ -2311,7 +2361,6 @@ impl Viewer {
                             }
                             ui.separator();
                             if Tile::new(Icon::Previous, "Previous Image")
-                                .icon_only()
                                 .hint("Previous Image · Left arrow")
                                 .enabled(self.neighbor(false).is_some())
                                 .show(ui)
@@ -2320,7 +2369,6 @@ impl Viewer {
                                 self.navigate(false);
                             }
                             if Tile::new(Icon::Next, "Next Image")
-                                .icon_only()
                                 .hint("Next Image · Right arrow")
                                 .enabled(self.neighbor(true).is_some())
                                 .show(ui)
@@ -2329,12 +2377,11 @@ impl Viewer {
                                 self.navigate(true);
                             }
                             ui.separator();
+                            self.folder_toggle(ui);
                             let more = Tile::new(Icon::More, "More Tools")
-                                .icon_only()
                                 .selected(options_open)
                                 .show(ui);
                             if Tile::new(Icon::Play, "Start Slideshow")
-                                .icon_only()
                                 .enabled(self.has_slideshow_images())
                                 .show(ui)
                                 .clicked()
@@ -2349,7 +2396,6 @@ impl Viewer {
                                 "Full Screen · F11"
                             };
                             if Tile::new(Icon::Fullscreen, label)
-                                .icon_only()
                                 .selected(fullscreen)
                                 .show(ui)
                                 .clicked()
@@ -2362,13 +2408,32 @@ impl Viewer {
                     })
                     .inner
             });
-        egui::Popup::menu(&dock.inner)
+        let options = egui::Popup::menu(&dock.inner)
             .id(popup_id)
             .anchor(dock.response.rect)
             .align(egui::RectAlign::TOP)
-            .gap(8.)
-            .frame(theme::floating(ctx).inner_margin(egui::Margin::symmetric(13, 10)))
+            .gap(5.)
+            .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
+            .frame(theme::floating(ctx).inner_margin(egui::Margin::symmetric(7, 4)))
             .show(|ui| self.floating_options(ui));
+        let transform = chrome::floating_tool_popup(
+            &dock.inner,
+            popup_id,
+            options,
+            |ui, tool, focus| match tool {
+                FloatingTool::File => {
+                    self.file_actions(ui);
+                    None
+                }
+                FloatingTool::Rotate => {
+                    let tools = self.image_transform_tools();
+                    chrome::floating_rotation_panel(ui, &mut self.canvas, tools, focus)
+                }
+            },
+        );
+        if let Some(action) = transform.flatten() {
+            self.apply_image_transform(ctx, action);
+        }
 
         let stage_shows_error = self.error && self.picture.is_none() && self.file.is_some();
         if !self.loading && !self.status.is_empty() && !stage_shows_error {
@@ -2394,66 +2459,104 @@ impl Viewer {
         }
     }
 
-    fn floating_options(&mut self, ui: &mut egui::Ui) {
-        use crate::chrome::{self, Icon, menu_item};
+    fn floating_options(&mut self, ui: &mut egui::Ui) -> [egui::Response; 2] {
+        use crate::chrome::{Icon, Tile};
 
-        let column = egui::Layout::top_down_justified(egui::Align::Min);
-        ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(9., 3.);
-            ui.with_layout(column, |ui| {
-                ui.set_width(165.);
-                ui.strong("File");
-                self.file_actions(ui);
-            });
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.;
+            let file = Tile::new(Icon::File, "File").show(ui);
             ui.separator();
-            ui.with_layout(column, |ui| {
-                ui.set_width(183.);
-                ui.strong("Image");
-                let has_picture = self.picture.is_some();
-                if menu_item(ui, Icon::Fit, "Fit Image", has_picture, "0") {
-                    self.canvas.fit();
-                }
-                if menu_item(ui, Icon::Actual, "Actual Pixels", has_picture, "1") {
-                    self.canvas.set_zoom(1.);
-                }
-                let tools = self.image_transform_tools();
-                if let Some(action) =
-                    chrome::rotation_item(ui, &mut self.canvas, has_picture, tools)
-                {
-                    self.apply_image_transform(ui.ctx(), action);
-                }
-                self.copy_actions(ui);
-                self.bediz_menu_action(ui, has_picture);
-            });
+            let has_picture = self.picture.is_some();
+            if Tile::new(Icon::Fit, "Fit Image")
+                .hint("Fit Image · 0")
+                .enabled(has_picture)
+                .show(ui)
+                .clicked()
+            {
+                self.canvas.fit();
+            }
+            if Tile::new(Icon::Actual, "Actual Pixels")
+                .hint("Actual Pixels · 1")
+                .enabled(has_picture)
+                .show(ui)
+                .clicked()
+            {
+                self.canvas.set_zoom(1.);
+            }
+            let rotate = Tile::new(Icon::Rotate, "Rotation and Edit")
+                .hint("Rotation, Crop, Flip and Undo")
+                .enabled(has_picture)
+                .show(ui);
             ui.separator();
-            ui.with_layout(column, |ui| {
-                ui.set_width(165.);
-                ui.strong("View");
-                let folder = if self.browser {
-                    "Hide Folder Browser"
+            let can_copy = has_picture && !self.copying;
+            if Tile::new(Icon::Copy, "Copy Image")
+                .enabled(can_copy)
+                .show(ui)
+                .clicked()
+            {
+                self.copy(ui.ctx(), false);
+            }
+            if Tile::new(Icon::CopyResized, "Copy Resized…")
+                .enabled(can_copy)
+                .show(ui)
+                .clicked()
+            {
+                self.open_export(ExportKind::Copy);
+                ui.close();
+            }
+            let fallback = self.bediz == Some(false);
+            let label = if fallback {
+                "Copy and Open Bediz"
+            } else {
+                "Edit in Bediz"
+            };
+            let can_edit = self.bediz == Some(true) || (fallback && !self.copying);
+            let edit = Tile::new(Icon::Edit, label).enabled(has_picture && can_edit);
+            let edit = if self.bediz.is_none() {
+                edit.hint("Edit in Bediz · Bediz is not installed")
+            } else {
+                edit
+            };
+            if edit.show(ui).clicked() {
+                if fallback {
+                    self.copy(ui.ctx(), true);
                 } else {
-                    "Show Folder Browser"
-                };
-                if menu_item(ui, Icon::FolderPane, folder, self.folder.is_some(), "") {
-                    self.set_browser_visible(!self.browser);
+                    let original = self.file.as_deref().is_some_and(bediz_original_supported)
+                        && !self.has_pixel_edits();
+                    self.edit(ui.ctx(), !original || self.canvas.angle != 0.);
                 }
-                let info = if self.info.visible {
-                    "Hide Image Properties"
-                } else {
-                    "Show Image Properties"
-                };
-                if menu_item(ui, Icon::Info, info, self.file.is_some(), "") {
-                    self.toggle_info();
-                }
-                let settings = ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(
-                    egui::Modifiers::COMMAND,
-                    egui::Key::Comma,
-                ));
-                if menu_item(ui, Icon::Settings, "Settings…", true, &settings) {
-                    self.settings_open = true;
-                }
-            });
-        });
+                ui.close();
+            }
+            ui.separator();
+            let info = if self.info.visible {
+                "Hide Image Properties"
+            } else {
+                "Show Image Properties"
+            };
+            if Tile::new(Icon::Info, info)
+                .enabled(self.file.is_some())
+                .selected(self.info.visible && self.file.is_some())
+                .show(ui)
+                .clicked()
+            {
+                self.toggle_info();
+                ui.close();
+            }
+            let settings = ui.ctx().format_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND,
+                egui::Key::Comma,
+            ));
+            if Tile::new(Icon::Settings, "Settings…")
+                .hint(&format!("Settings · {settings}"))
+                .show(ui)
+                .clicked()
+            {
+                self.settings_open = true;
+                ui.close();
+            }
+            [file, rotate]
+        })
+        .inner
     }
 
     fn image_stage(&mut self, ui: &mut egui::Ui, quiet: bool) {
@@ -2490,7 +2593,10 @@ impl Viewer {
             if canvas.secondary_clicked() && !image_clicked {
                 egui::Popup::close_id(ui.ctx(), egui::Popup::default_response_id(&canvas));
             } else {
-                egui::Popup::context_menu(&canvas).show(|ui| self.image_context_menu(ui));
+                egui::Popup::context_menu(&canvas)
+                    .frame(crate::theme::menu_frame(ui.style()))
+                    .style(crate::theme::menu_style)
+                    .show(|ui| self.image_context_menu(ui));
             }
         } else if let Some(transition) = &self.transition {
             transition
@@ -2498,10 +2604,21 @@ impl Viewer {
                 .paint_still(ui, transition.texture.id(), transition.size);
         } else if quiet {
             let (_, canvas) = ui.allocate_exact_size(ui.available_size(), egui::Sense::click());
-            egui::Popup::context_menu(&canvas).show(|ui| {
-                self.file_actions(ui);
-                self.fullscreen_action(ui);
-            });
+            egui::Popup::context_menu(&canvas)
+                .frame(crate::theme::menu_frame(ui.style()))
+                .style(crate::theme::menu_style)
+                .show(|ui| {
+                    self.file_actions(ui);
+                    if crate::chrome::menu_item(
+                        ui,
+                        crate::chrome::Icon::Fullscreen,
+                        "Exit Full Screen",
+                        true,
+                        "Esc",
+                    ) {
+                        self.toggle_fullscreen(ui.ctx());
+                    }
+                });
         } else {
             ui.add_space((ui.available_height() * 0.5 - 74.).max(0.));
             ui.vertical_centered(|ui| {
@@ -2538,12 +2655,6 @@ impl Viewer {
         crate::chrome::TransformTools {
             enabled: self.can_transform_image(),
             can_undo: self.image_undo.is_some(),
-        }
-    }
-
-    fn image_transform_actions(&mut self, ui: &mut egui::Ui) {
-        if let Some(action) = self.image_transform_tools().show(ui) {
-            self.apply_image_transform(ui.ctx(), action);
         }
     }
 
@@ -2627,88 +2738,22 @@ impl Viewer {
         if menu_item(ui, Icon::Copy, "Copy Image", can_copy, &copy) {
             self.copy(ui.ctx(), false);
         }
-        if menu_item(ui, Icon::Copy, "Copy Resized…", can_copy, "") {
+        if menu_item(ui, Icon::CopyResized, "Copy Resized…", can_copy, "") {
             self.open_export(ExportKind::Copy);
         }
     }
 
     fn image_context_menu(&mut self, ui: &mut egui::Ui) {
-        use crate::chrome::{Icon, menu_item};
+        use crate::chrome::{Icon, menu_item, rotation_item, submenu};
 
-        ui.set_min_width(195.);
-        ui.spacing_mut().item_spacing.y = 2.;
-        if menu_item(
-            ui,
-            Icon::Previous,
-            "Previous Image",
-            self.neighbor(false).is_some(),
-            "←",
-        ) {
-            self.navigate(false);
-        }
-        if menu_item(
-            ui,
-            Icon::Next,
-            "Next Image",
-            self.neighbor(true).is_some(),
-            "→",
-        ) {
-            self.navigate(true);
-        }
-        if self.slideshow.is_some() {
-            if menu_item(ui, Icon::Play, "End Slideshow", true, "Esc") {
-                self.stop_slideshow(ui.ctx());
-            }
-        } else if menu_item(
-            ui,
-            Icon::Play,
-            "Start Slideshow",
-            self.has_slideshow_images(),
-            "",
-        ) {
-            self.start_slideshow(ui.ctx());
-        }
-        let current_transition = self
-            .slideshow
-            .as_mut()
-            .map_or(&mut self.browse_transition, |show| {
-                &mut show.current.transition
-            });
-        ui.menu_button("Transition", |ui| {
-            for style in canvas::TransitionStyle::ALL {
-                if ui
-                    .selectable_label(*current_transition == style, style.label())
-                    .clicked()
-                {
-                    *current_transition = style;
-                    ui.close();
-                }
-            }
-        });
+        ui.set_min_width(204.);
+        self.image_menu_navigation(ui);
         ui.separator();
-        self.bediz_menu_action(ui, self.picture.is_some());
-        self.copy_actions(ui);
-        ui.separator();
-        ui.menu_button("Rotate and Edit", |ui| {
-            if menu_item(ui, Icon::RotateLeft, "Rotate Left 90°", true, "") {
-                self.canvas.rotate_by(-90.);
-            }
-            if menu_item(ui, Icon::Rotate, "Rotate Right 90°", true, "") {
-                self.canvas.rotate_by(90.);
-            }
-            if menu_item(
-                ui,
-                Icon::Rotate,
-                "Reset Rotation",
-                self.canvas.angle != 0.,
-                "",
-            ) {
-                self.canvas.angle = 0.;
-            }
-            ui.separator();
-            self.image_transform_actions(ui);
-        });
-        ui.menu_button("Zoom", |ui| {
+        let tools = self.image_transform_tools();
+        if let Some(action) = rotation_item(ui, &mut self.canvas, true, tools) {
+            self.apply_image_transform(ui.ctx(), action);
+        }
+        submenu(ui, Icon::ZoomIn, "Zoom", |ui| {
             if menu_item(ui, Icon::ZoomIn, "Zoom In", true, "") {
                 self.canvas.step_zoom(1.25);
             }
@@ -2722,25 +2767,89 @@ impl Viewer {
                 self.canvas.set_zoom(1.);
             }
         });
+        submenu(ui, Icon::Transition, "Transition", |ui| {
+            ui.set_min_width(133.);
+            let transition = self
+                .slideshow
+                .as_mut()
+                .map_or(&mut self.browse_transition, |show| {
+                    &mut show.current.transition
+                });
+            for style in canvas::TransitionStyle::ALL {
+                if ui
+                    .selectable_value(transition, style, style.label())
+                    .clicked()
+                {
+                    ui.close();
+                }
+            }
+        });
         ui.separator();
-        self.file_actions(ui);
-        self.fullscreen_action(ui);
+        self.copy_actions(ui);
+        self.bediz_menu_action(ui, self.picture.is_some());
+        ui.separator();
+        submenu(ui, Icon::File, "File", |ui| self.file_actions(ui));
     }
 
-    fn fullscreen_action(&mut self, ui: &mut egui::Ui) {
-        if self.slideshow.is_some() {
-            return;
-        }
-        let full = ui.input(|input| input.viewport().fullscreen == Some(true));
-        let label = if full {
-            "Exit Full Screen"
-        } else {
-            "Full Screen"
-        };
-        let shortcut = if full { "Esc" } else { "F11" };
-        if crate::chrome::menu_item(ui, crate::chrome::Icon::Fullscreen, label, true, shortcut) {
-            self.toggle_fullscreen(ui.ctx());
-        }
+    fn image_menu_navigation(&mut self, ui: &mut egui::Ui) {
+        use crate::chrome::{Icon, Tile};
+
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.;
+            for (forward, icon, label, hint) in [
+                (
+                    false,
+                    Icon::Previous,
+                    "Previous Image",
+                    "Previous Image · Left arrow",
+                ),
+                (true, Icon::Next, "Next Image", "Next Image · Right arrow"),
+            ] {
+                if Tile::new(icon, label)
+                    .hint(hint)
+                    .enabled(self.neighbor(forward).is_some())
+                    .show(ui)
+                    .clicked()
+                {
+                    ui.close();
+                    self.navigate(forward);
+                }
+            }
+            ui.separator();
+            if self.slideshow.is_some() {
+                if Tile::new(Icon::Stop, "End Slideshow")
+                    .hint("End Slideshow · Esc")
+                    .show(ui)
+                    .clicked()
+                {
+                    ui.close();
+                    self.stop_slideshow(ui.ctx());
+                }
+            } else {
+                if Tile::new(Icon::Play, "Start Slideshow")
+                    .enabled(self.has_slideshow_images())
+                    .show(ui)
+                    .clicked()
+                {
+                    ui.close();
+                    self.start_slideshow(ui.ctx());
+                }
+                let full = ui.input(|input| input.viewport().fullscreen == Some(true));
+                let (label, hint) = if full {
+                    ("Exit Full Screen", "Exit Full Screen · Esc")
+                } else {
+                    ("Full Screen", "Full Screen · F11")
+                };
+                if Tile::new(Icon::Fullscreen, label)
+                    .hint(hint)
+                    .show(ui)
+                    .clicked()
+                {
+                    ui.close();
+                    self.toggle_fullscreen(ui.ctx());
+                }
+            }
+        });
     }
 }
 
@@ -2808,10 +2917,7 @@ fn absolute(path: PathBuf) -> PathBuf {
 }
 
 fn path_name(path: &Path) -> String {
-    path.file_name().map_or_else(
-        || path.display().to_string(),
-        |name| name.to_string_lossy().into_owned(),
-    )
+    work::display_name(path.file_name().unwrap_or(path.as_os_str()))
 }
 
 fn bytes_label(bytes: u64) -> String {
@@ -2869,6 +2975,66 @@ mod tests {
     use super::*;
 
     #[test]
+    fn floating_folder_is_compact_and_scrolls_through_rows() {
+        let folder = tempfile::tempdir().unwrap();
+        for index in 0..24 {
+            std::fs::write(folder.path().join(format!("image {index:02}.png")), []).unwrap();
+        }
+        let ctx = egui::Context::default();
+        let creation = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut viewer = Viewer::new(&creation, OpenQueue::default());
+        viewer.folder = Some(folder.path().to_owned());
+        viewer.entries = work::folder(folder.path()).unwrap();
+        for entry in &viewer.entries {
+            viewer.thumbnails.images.insert(entry.path.clone(), None);
+        }
+        let stage = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(680., 420.));
+        let mut frame = |events| {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(stage),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| viewer.floating_folder(ctx, stage),
+            )
+        };
+        let shows = |output: &egui::FullOutput, label: &str| {
+            output.shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Text(text) if text.galley.job.text == label)
+            })
+        };
+
+        frame(vec![]);
+        let output = frame(vec![]);
+        assert!(shows(&output, "image 00.png"));
+        assert!(!shows(&output, "image 20.png"));
+        let panel = ctx
+            .read_response(egui::Id::new("focus-folder"))
+            .unwrap()
+            .rect;
+        assert!(stage.contains_rect(panel));
+        assert!((215. ..=245.).contains(&panel.width()));
+        assert!(
+            panel.height() <= 285.,
+            "panel exceeded its height budget: {panel:?}"
+        );
+
+        frame(vec![egui::Event::PointerMoved(panel.center())]);
+        frame(vec![egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0., -400.),
+            modifiers: egui::Modifiers::NONE,
+        }]);
+        for _ in 0..12 {
+            frame(vec![]);
+        }
+        let output = frame(vec![]);
+        assert!(!shows(&output, "image 00.png"));
+        assert!(shows(&output, "image 10.png"));
+    }
+
+    #[test]
     fn floating_more_opens_settings_on_an_empty_canvas_at_minimum_size() {
         let ctx = egui::Context::default();
         let creation = eframe::CreationContext::_new_kittest(ctx.clone());
@@ -2917,20 +3083,129 @@ mod tests {
         let more = more_dots[1];
         frame(vec![egui::Event::PointerMoved(more), click(more, true)]);
         frame(vec![click(more, false)]);
+        frame(vec![]);
         let output = frame(vec![]);
-        assert!(label(&output, "Open Image…").is_some());
-        let settings = label(&output, "Settings…").expect("More shows Settings without an image");
+        assert!(
+            label(&output, "File").is_none() && label(&output, "Settings…").is_none(),
+            "the More palette also uses icons alone"
+        );
         let popup = ctx
             .read_response(egui::Id::new("floating-options"))
             .expect("the options panel has a distinct popup");
         assert!(stage.contains_rect(popup.rect));
         assert!(popup.rect.bottom() < more.y);
+        assert!(popup.rect.top() > stage.center().y);
+        assert!(popup.rect.height() < 54., "More should fit on one row");
 
+        let file = egui::pos2(popup.rect.left() + 23., popup.rect.center().y);
+        frame(vec![egui::Event::PointerMoved(file)]);
+        frame(vec![]);
+        let output = frame(vec![]);
+        let open_image = label(&output, "Open Image…").expect("File opens on hover");
+        let parent_id = egui::Id::new("floating-options");
+        let submenu = ctx
+            .read_response(parent_id.with(crate::chrome::FloatingTool::File))
+            .expect("File has a distinct flyout");
+        assert!(stage.contains_rect(submenu.rect));
+        let gap = popup.rect.top() - submenu.rect.bottom();
+        assert!((2. ..=9.).contains(&gap), "File flyout gap {gap}");
+
+        frame(vec![egui::Event::PointerMoved(egui::pos2(
+            file.x,
+            submenu.rect.bottom() + gap * 0.5,
+        ))]);
+        let output = frame(vec![egui::Event::PointerMoved(open_image)]);
+        assert!(label(&output, "Open Image…").is_some());
+        let settings = egui::pos2(popup.rect.right() - 22., popup.rect.center().y);
+        frame(vec![egui::Event::PointerMoved(settings)]);
         frame(vec![
             egui::Event::PointerMoved(settings),
             click(settings, true),
         ]);
         frame(vec![click(settings, false)]);
         assert!(viewer.settings_open);
+    }
+
+    #[test]
+    fn floating_rotate_flyout_stays_above_more_and_accepts_clicks() {
+        let ctx = egui::Context::default();
+        let creation = eframe::CreationContext::_new_kittest(ctx.clone());
+        let mut viewer = Viewer::new(&creation, OpenQueue::default());
+        let pixels = RgbaImage::new(2, 2);
+        let texture = load_texture(&ctx, "Test image", &pixels);
+        viewer.picture = Some((
+            Arc::new(Decoded {
+                pixels,
+                format: "PNG".into(),
+            }),
+            texture,
+        ));
+        let stage = egui::Rect::from_min_size(egui::pos2(31., 22.), egui::vec2(680., 420.));
+        let mut frame = |events| {
+            ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_max(egui::Pos2::ZERO, stage.max)),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| viewer.floating_controls(ctx, stage),
+            )
+        };
+        let click = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let label = |output: &egui::FullOutput, label: &str| {
+            output.shapes.iter().find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.job.text == label => {
+                    Some(text.pos + text.galley.size() * 0.5)
+                }
+                _ => None,
+            })
+        };
+        let popup_id = egui::Id::new("floating-options");
+
+        frame(vec![]);
+        let output = frame(vec![]);
+        let more = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Circle(dot) if dot.radius == 1.45 => Some(dot.center),
+                _ => None,
+            })
+            .nth(1)
+            .unwrap();
+        frame(vec![egui::Event::PointerMoved(more), click(more, true)]);
+        frame(vec![click(more, false)]);
+        frame(vec![]);
+        let output = frame(vec![]);
+        let menu = ctx.read_response(popup_id).unwrap().rect;
+        let rotate = label(&output, "1:1").unwrap() + egui::vec2(35., 0.);
+        frame(vec![egui::Event::PointerMoved(rotate)]);
+        frame(vec![]);
+        let output = frame(vec![]);
+        let left = label(&output, "90° left").expect("Rotate opens on hover");
+        let flyout = ctx
+            .read_response(popup_id.with(crate::chrome::FloatingTool::Rotate))
+            .unwrap()
+            .rect;
+        assert!(stage.contains_rect(flyout));
+        let gap = menu.top() - flyout.bottom();
+        assert!((2. ..=9.).contains(&gap), "Rotate flyout gap {gap}");
+
+        frame(vec![egui::Event::PointerMoved(left), click(left, true)]);
+        frame(vec![click(left, false)]);
+        assert!(egui::Popup::is_id_open(&ctx, popup_id));
+        let outside = stage.min + egui::vec2(4., 4.);
+        frame(vec![
+            egui::Event::PointerMoved(outside),
+            click(outside, true),
+        ]);
+        frame(vec![click(outside, false)]);
+        assert!(!egui::Popup::is_id_open(&ctx, popup_id));
+        assert_eq!(viewer.canvas.angle, -90.);
     }
 }
