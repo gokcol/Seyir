@@ -9,7 +9,7 @@
   <key>CFBundleIconFile</key><string>Seyir</string>
   <key>CFBundleExecutable</key><string>Seyir</string>
   <key>CFBundleShortVersionString</key><string>1.0.0</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleVersion</key><string>2</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>CFBundleDocumentTypes</key>
@@ -20,6 +20,19 @@
       <key>LSHandlerRank</key><string>Alternate</string>
       <key>LSItemContentTypes</key>
       <array><string>public.image</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Additional image formats</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>CFBundleTypeExtensions</key>
+      <array>
+        <string>jfif</string>
+        <string>apng</string>
+        <string>pnm</string>
+        <string>pam</string>
+        <string>ff</string>
+      </array>
     </dict>
   </array>
 </dict>

@@ -10,6 +10,8 @@ mod decode;
 #[cfg(target_os = "macos")]
 mod mac_open;
 mod metadata;
+#[cfg(target_os = "windows")]
+mod open_with_windows;
 mod theme;
 mod viewer;
 mod work;
@@ -28,6 +30,9 @@ use wgpu as _;
 type OpenQueue = Arc<Mutex<VecDeque<PathBuf>>>;
 
 fn main() -> eframe::Result {
+    #[cfg(target_os = "windows")]
+    open_with_windows::run_if_requested();
+
     let files: OpenQueue = Arc::new(Mutex::new(
         std::env::args_os()
             .skip(1)

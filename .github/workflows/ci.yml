@@ -34,7 +34,47 @@ jobs:
         run: |
           cargo build --locked --release
           New-Item -ItemType Directory -Path dist
-          Compress-Archive -LiteralPath target/release/seyir.exe,README.md -DestinationPath dist/Seyir-1.0.0-windows-x64.zip
+          Compress-Archive -LiteralPath target/release/seyir.exe,README.md,'packaging/windows/Register Open With.cmd','packaging/windows/Remove Open With.cmd' -DestinationPath dist/Seyir-1.0.0-windows-x64.zip
+      - name: Verify Explorer Open With registration
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $folder = Join-Path $env:RUNNER_TEMP 'Seyir Görsel'
+          New-Item -ItemType Directory -Path $folder | Out-Null
+          $exe = Join-Path $folder 'seyir.exe'
+          Copy-Item target/release/seyir.exe $exe
+          $classes = 'HKCU:\Software\Classes'
+          $png = Join-Path $classes '.png'
+          $before = (Get-Item -LiteralPath $png -ErrorAction SilentlyContinue)?.GetValue('')
+          $program = Join-Path $classes 'Seyir.Image.1'
+          $application = Join-Path $classes 'Applications\seyir.exe'
+          $associations = Join-Path $png 'OpenWithProgids'
+          $command = '"{0}" "%1"' -f $exe
+          function Invoke-SeyirRegistration($mode) {
+            $process = Start-Process -FilePath $exe -ArgumentList $mode -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw "Seyir $mode returned $($process.ExitCode)" }
+          }
+          try {
+            Invoke-SeyirRegistration '--register-open-with'
+            Invoke-SeyirRegistration '--register-open-with'
+            foreach ($handler in @($program, $application)) {
+              $actual = (Get-Item -LiteralPath "$handler\shell\open\command").GetValue('')
+              if ($actual -cne $command) { throw 'Unexpected Open with command' }
+            }
+            if ((Get-Item -LiteralPath $associations).GetValueNames() -notcontains 'Seyir.Image.1') {
+              throw 'Missing PNG Open with registration'
+            }
+          } finally {
+            Invoke-SeyirRegistration '--unregister-open-with'
+          }
+          Invoke-SeyirRegistration '--unregister-open-with'
+          if ((Test-Path -LiteralPath $program) -or (Test-Path -LiteralPath $application)) {
+            throw 'Seyir handler remained registered'
+          }
+          $remaining = (Get-Item -LiteralPath $associations -ErrorAction SilentlyContinue)?.GetValueNames()
+          if ($remaining -contains 'Seyir.Image.1') { throw 'Seyir PNG association remained registered' }
+          $after = (Get-Item -LiteralPath $png -ErrorAction SilentlyContinue)?.GetValue('')
+          if ($after -cne $before) { throw 'PNG default handler changed' }
       - uses: actions/upload-artifact@v4
         with:
           name: Seyir-${{ runner.os }}-${{ runner.arch }}
