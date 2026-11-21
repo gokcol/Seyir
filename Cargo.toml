@@ -1,0 +1,44 @@
+[package]
+name = "seyir"
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.93"
+description = "A fast, folder-first image viewer for macOS and Windows"
+
+[dependencies]
+arboard = "=3.7.0"
+chrono = "=0.4.45"
+crc32fast = "=1.5.2"
+eframe = { version = "=0.33.3", default-features = false, features = ["wgpu", "default_fonts", "accesskit"] }
+flate2 = "=1.1.10"
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp", "bmp", "tiff", "gif", "ico", "pnm", "tga", "dds", "hdr", "ff"] }
+resvg = { version = "=0.45.1", default-features = false, features = ["text", "raster-images", "system-fonts"] }
+rfd = { version = "=0.17.2", default-features = false }
+roxmltree = "=0.20.0"
+tempfile = "=3.27.0"
+wgpu = { version = "=27.0.1", default-features = false, features = ["metal", "dx12", "wgsl"] }
+winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+directories = "=6.0.0"
+objc2 = "=0.6.4"
+objc2-core-foundation = "=0.3.2"
+objc2-core-graphics = "=0.3.2"
+objc2-image-io = { version = "=0.3.2", default-features = false, features = ["std", "CGImageSource", "CGImageProperties", "objc2-core-graphics"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "=0.61.3", features = ["Foundation", "Graphics_Imaging", "Storage_Streams", "Win32_System_WinRT", "Win32_System_Com", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Storage_Packaging_Appx", "Win32_Foundation"] }
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "=3.0.12"
+
+[profile.dev]
+debug = "line-tables-only"
+incremental = false
+
+[profile.dev.package."*"]
+debug = false
+
+[profile.release]
+lto = "thin"
+strip = "debuginfo"
