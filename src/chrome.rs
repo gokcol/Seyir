@@ -4,6 +4,11 @@ use eframe::egui::{
     Vec2, WidgetInfo, WidgetType, pos2, vec2,
 };
 
+const TILE_HEIGHT: f32 = 33.;
+const GROUP_MARGIN_Y: i8 = 3;
+const GROUP_STROKE: f32 = 1.;
+const ROW_HEIGHT: f32 = TILE_HEIGHT + 2. * (GROUP_MARGIN_Y as f32 + GROUP_STROKE);
+
 #[derive(Clone, Copy)]
 pub(crate) enum Icon {
     OpenImage,
@@ -96,7 +101,7 @@ impl<'a> Tile<'a> {
         } else {
             33.
         };
-        let size = vec2(icon_width + caption_width + dropdown_width, 33.);
+        let size = vec2(icon_width + caption_width + dropdown_width, TILE_HEIGHT);
         let response = ui
             .add_enabled_ui(self.enabled, |ui| {
                 ui.allocate_exact_size(size, Sense::click())
@@ -194,6 +199,15 @@ impl<'a> Tile<'a> {
     }
 }
 
+pub(crate) fn row(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
+    let size = vec2(ui.available_width(), ROW_HEIGHT);
+    let layout = egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true);
+    ui.allocate_ui_with_layout(size, layout, |ui| {
+        ui.spacing_mut().item_spacing = vec2(7., 6.);
+        add(ui);
+    });
+}
+
 pub(crate) fn group(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
     let theme = ui.visuals();
     let edge = theme.panel_fill.lerp_to_gamma(theme.text_color(), 0.12);
@@ -201,18 +215,20 @@ pub(crate) fn group(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
     egui::Frame::new()
         .corner_radius(11)
         .fill(color)
-        .stroke(Stroke::new(1_f32, edge))
-        .inner_margin(egui::Margin::symmetric(4, 3))
+        .stroke(Stroke::new(GROUP_STROKE, edge))
+        .inner_margin(egui::Margin::symmetric(4, GROUP_MARGIN_Y))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
+            let size = vec2(ui.available_width(), TILE_HEIGHT);
+            let layout = egui::Layout::left_to_right(egui::Align::Center);
+            ui.allocate_ui_with_layout(size, layout, |ui| {
                 ui.spacing_mut().item_spacing.x = 4.;
                 add(ui);
             });
         });
 }
 
-pub(crate) fn brand(ui: &mut Ui, texture: &egui::TextureHandle) {
-    ui.add(egui::Image::new((texture.id(), Vec2::splat(44.))).alt_text("Seyir"));
+pub(crate) fn brand(ui: &mut Ui, texture: &egui::TextureHandle) -> Response {
+    ui.add(egui::Image::new((texture.id(), Vec2::splat(ROW_HEIGHT))).alt_text("Seyir"))
 }
 
 impl Icon {
@@ -363,5 +379,33 @@ impl Icon {
             }
             Self::Fullscreen => corners(8.5, 3.4),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toolbar_logo_and_buttons_share_a_centerline() {
+        let ctx = egui::Context::default();
+        let texture = ctx.load_texture(
+            "test logo",
+            egui::ColorImage::filled([1, 1], Color32::WHITE),
+            egui::TextureOptions::LINEAR,
+        );
+        let _ = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                row(ui, |ui| {
+                    let logo = brand(ui, &texture).rect.center().y;
+                    for icon in [Icon::OpenImage, Icon::Rotate, Icon::Info] {
+                        group(ui, |ui| {
+                            let button = Tile::new(icon, "Test button").button(ui).rect.center().y;
+                            assert!((logo - button).abs() <= 0.5, "logo {logo}, button {button}");
+                        });
+                    }
+                });
+            });
+        });
     }
 }

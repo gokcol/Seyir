@@ -649,8 +649,7 @@ impl Viewer {
 
         let has_picture = self.picture.is_some();
         let show_edit_caption = ui.available_width() >= 800.;
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(7., 6.);
+        chrome::row(ui, |ui| {
             chrome::brand(ui, &self.app_icon);
             chrome::group(ui, |ui| {
                 if Tile::new(Icon::OpenImage, "Open image…").show(ui).clicked() {
