@@ -5,12 +5,20 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      windows_release_tag:
+        description: 'Build Setup only from this existing release (for example v1.0.0)'
+        type: string
+      windows_portable_sha256:
+        description: 'SHA-256 of the published Windows portable ZIP'
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   native:
+    if: github.event_name != 'workflow_dispatch' || inputs.windows_release_tag == ''
     strategy:
       fail-fast: false
       matrix:
@@ -75,8 +83,45 @@ jobs:
           if ($remaining -contains 'Seyir.Image.1') { throw 'Seyir PNG association remained registered' }
           $after = (Get-Item -LiteralPath $png -ErrorAction SilentlyContinue)?.GetValue('')
           if ($after -cne $before) { throw 'PNG default handler changed' }
+      - name: Build and verify Windows Setup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '& ./packaging/windows/bundle-setup.ps1 -ExecutablePath target/release/seyir.exe -Verify'
       - uses: actions/upload-artifact@v4
         with:
           name: Seyir-${{ runner.os }}-${{ runner.arch }}
-          path: dist/*.zip
+          path: |
+            dist/*.zip
+            dist/*.dmg
+            dist/*-Setup.exe
+          if-no-files-found: error
+
+  windows-release-setup:
+    if: github.event_name == 'workflow_dispatch' && inputs.windows_release_tag != ''
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and verify Setup from the published binary
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.windows_release_tag }}
+          PORTABLE_SHA256: ${{ inputs.windows_portable_sha256 }}
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v([0-9]+\.[0-9]+\.[0-9]+)$') { throw 'Invalid release tag.' }
+          $version = $Matches[1]
+          if ($env:PORTABLE_SHA256 -notmatch '^[0-9a-fA-F]{64}$') { throw 'A portable ZIP SHA-256 is required.' }
+          $asset = "Seyir-$version-windows-x64.zip"
+          $archive = Join-Path $env:RUNNER_TEMP $asset
+          $extracted = Join-Path $env:RUNNER_TEMP 'seyir-portable'
+          $uri = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:RELEASE_TAG/$asset"
+          Invoke-WebRequest -Uri $uri -OutFile $archive
+          if ((Get-FileHash $archive).Hash -ne $env:PORTABLE_SHA256) {
+            throw 'The portable ZIP hash does not match the expected release asset.'
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath $extracted
+          & ./packaging/windows/bundle-setup.ps1 -ExecutablePath (Join-Path $extracted 'seyir.exe') -Version $version -Verify
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Seyir-Windows-Setup
+          path: dist/*-Setup.exe
           if-no-files-found: error

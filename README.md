@@ -23,8 +23,8 @@ Decoding and indexing run off the UI thread. A bounded image cache and nearby-im
 
 ## Open With
 
-- **macOS.** Put `Seyir.app` in Applications. In Finder, right-click an image and choose **Open With → Seyir**. Finder lists Seyir as an alternate viewer.
-- **Windows.** Extract the portable ZIP to the folder where you want to keep Seyir. Double-click **Register Open With.cmd** once, then right-click an image in Explorer and choose **Open with → Seyir**. Run the registration again from the new folder if you move Seyir. Use **Remove Open With.cmd** before removing the app. Registration applies to your Windows account and preserves your current defaults.
+- **macOS.** Open the DMG and drag Seyir into Applications. In Finder, right-click an image and choose **Open With → Seyir**.
+- **Windows.** Setup installs Seyir for the current user and adds an Explorer **Open with** entry. If you use the portable ZIP, extract it and double-click **Register Open With.cmd** once. Run registration again if you move the portable app, and use **Remove Open With.cmd** before removing it. Registration preserves your current defaults.
 
 ## Build
 
@@ -32,9 +32,9 @@ Use Rust 1.93.1 or newer. Run `cargo run --locked` from this repository. Pass an
 
 | Platform | Native package |
 | --- | --- |
-| macOS 14 or later | Run `scripts/bundle-macos.sh` to build a locally signed `Seyir.app` and ZIP in `dist/`. |
-| Windows x64 | Run `cargo build --locked --release` to produce `target/release/seyir.exe`. |
+| macOS 14 or later | Run `scripts/bundle-macos.sh` to build a locally signed app, DMG, and ZIP in `dist/`. |
+| Windows x64 | Run `cargo build --locked --release` to produce `target/release/seyir.exe`. With Inno Setup 6 installed, run `packaging/windows/bundle-setup.ps1 -ExecutablePath target/release/seyir.exe` to build Setup. |
 
-The **Native builds** GitHub Actions workflow runs tests on both platforms and uploads the Mac application and Windows portable ZIP. GitHub requires sign-in to download workflow artifacts.
+The **Native builds** GitHub Actions workflow runs tests on both platforms and uploads the macOS and Windows packages. GitHub requires sign-in to download workflow artifacts.
 
 For a source check, run `cargo fmt --all -- --check`, `cargo clippy --locked --all-targets -- -D warnings`, and `cargo test --locked --all-targets`.
