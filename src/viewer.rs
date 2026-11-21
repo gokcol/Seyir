@@ -2370,10 +2370,8 @@ impl Viewer {
             .frame(theme::floating(ctx).inner_margin(egui::Margin::symmetric(13, 10)))
             .show(|ui| self.floating_options(ui));
 
-        if !self.loading
-            && !self.status.is_empty()
-            && !(self.error && self.picture.is_none() && self.file.is_some())
-        {
+        let stage_shows_error = self.error && self.picture.is_none() && self.file.is_some();
+        if !self.loading && !self.status.is_empty() && !stage_shows_error {
             egui::Area::new(egui::Id::new("floating-action-status"))
                 .order(egui::Order::Foreground)
                 .interactable(false)
