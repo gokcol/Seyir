@@ -12,7 +12,6 @@ AppVersion={#AppVersion}
 AppPublisher=gokcol
 AppPublisherURL=https://github.com/gokcol/Seyir
 AppSupportURL=https://github.com/gokcol/Seyir/issues
-AppUpdatesURL=https://github.com/gokcol/Seyir/releases
 VersionInfoVersion={#AppVersion}.0
 VersionInfoProductName=Seyir
 VersionInfoDescription=Seyir Setup

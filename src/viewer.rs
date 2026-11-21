@@ -6,6 +6,7 @@ use crate::{
     layout::{self, Layout, Preferences, SlideshowDefaults},
     metadata::{self, EditableMetadata, ImageMetadata},
     output::{self, Size},
+    updates,
     work::{self, Entry, ImageCache, Latest},
 };
 use eframe::egui::{self, Color32, RichText, Vec2};
@@ -74,6 +75,13 @@ struct Picker {
 enum ExportKind {
     Copy,
     SaveAs,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsTab {
+    Interface,
+    Playback,
+    Updates,
 }
 
 struct ExportImage {
@@ -184,7 +192,8 @@ pub struct Viewer {
     layout: Layout,
     next_layout: Option<Layout>,
     settings_open: bool,
-    settings_playback: bool,
+    settings_tab: SettingsTab,
+    updates: updates::State,
     browse_transition_default: TransitionStyle,
     browse_transition: TransitionStyle,
     slideshow_defaults: SlideshowDefaults,
@@ -307,7 +316,8 @@ impl Viewer {
             layout,
             next_layout: None,
             settings_open: false,
-            settings_playback: false,
+            settings_tab: SettingsTab::Interface,
+            updates: updates::State::default(),
             browse_transition_default: preferences.browse_transition,
             browse_transition: preferences.browse_transition,
             slideshow_defaults: preferences.slideshow,
@@ -1318,7 +1328,7 @@ impl Viewer {
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!full));
     }
 
-    fn settings(&mut self, ctx: &egui::Context) {
+    fn settings(&mut self, ctx: &egui::Context, app_frame: &eframe::Frame) {
         use panel_ui::{Glyph, dialog_button, dialog_tab, dialog_title, setting_switch};
         let frame = crate::theme::floating(ctx).inner_margin(egui::Margin::same(16));
         let mut browser = self.browser;
@@ -1331,21 +1341,15 @@ impl Viewer {
                 ui.set_width(338.);
                 dialog_title(ui, Glyph::Settings, "Settings", None);
                 ui.add_space(9.);
-                ui.columns_const(|[interface, playback]| {
-                    if dialog_tab(
-                        interface,
-                        Glyph::Interface,
-                        "Interface",
-                        !self.settings_playback,
-                    )
-                    .clicked()
-                    {
-                        self.settings_playback = false;
-                    }
-                    if dialog_tab(playback, Glyph::Play, "Playback", self.settings_playback)
-                        .clicked()
-                    {
-                        self.settings_playback = true;
+                ui.columns_const::<3, _>(|columns| {
+                    for (column, (tab, icon, label)) in columns.iter_mut().zip([
+                        (SettingsTab::Interface, Glyph::Interface, "Interface"),
+                        (SettingsTab::Playback, Glyph::Play, "Playback"),
+                        (SettingsTab::Updates, Glyph::Refresh, "Updates"),
+                    ]) {
+                        if dialog_tab(column, icon, label, self.settings_tab == tab).clicked() {
+                            self.settings_tab = tab;
+                        }
                     }
                 });
                 ui.add_space(9.);
@@ -1353,7 +1357,11 @@ impl Viewer {
                     .auto_shrink([false, true])
                     .max_height((ctx.content_rect().height() - 158.).max(160.))
                     .show(ui, |ui| {
-                        if self.settings_playback {
+                        if self.settings_tab == SettingsTab::Updates {
+                            self.updates.show(ui, app_frame);
+                            return None;
+                        }
+                        if self.settings_tab == SettingsTab::Playback {
                             ui.strong("Folder navigation");
                             ui.horizontal(|ui| {
                                 ui.label("Transition");
@@ -2040,7 +2048,7 @@ impl Viewer {
 }
 
 impl eframe::App for Viewer {
-    fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if let Some(layout) = self.next_layout.take() {
             self.change_layout(ctx, layout);
         }
@@ -2072,7 +2080,7 @@ impl eframe::App for Viewer {
 
         self.workspace(ctx);
         if self.settings_open {
-            self.settings(ctx);
+            self.settings(ctx, frame);
         } else if self.export.is_some() {
             self.export_options(ctx);
         } else if self.save_confirmation.is_some() {

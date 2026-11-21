@@ -1,0 +1,82 @@
+name: Seyir Microsoft Store MSIX
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/windows-msix.yml'
+      - 'packaging/windows/bundle-msix.ps1'
+      - 'packaging/windows/msix/**'
+  pull_request:
+    paths:
+      - '.github/workflows/windows-msix.yml'
+      - 'packaging/windows/bundle-msix.ps1'
+      - 'packaging/windows/msix/**'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Use store mode for the exact identity from Partner Center
+        type: choice
+        options: [test, store]
+        default: test
+      package_version:
+        description: Optional four-part MSIX version, ending in .0
+        type: string
+      identity_name:
+        description: Package/Identity/Name (defaults to MSIX_IDENTITY_NAME)
+        type: string
+      publisher:
+        description: Package/Identity/Publisher, with CN= (defaults to MSIX_PUBLISHER)
+        type: string
+      publisher_display_name:
+        description: PublisherDisplayName (defaults to MSIX_PUBLISHER_DISPLAY_NAME)
+        type: string
+      display_name:
+        description: Reserved product display name (defaults to MSIX_DISPLAY_NAME or Seyir)
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain
+        run: rustup toolchain install 1.93.1 --profile minimal --target x86_64-pc-windows-msvc
+      - name: Build and verify unsigned MSIX
+        shell: pwsh
+        env:
+          PACKAGE_MODE: ${{ inputs.mode || 'test' }}
+          PACKAGE_VERSION: ${{ inputs.package_version }}
+          STORE_IDENTITY_NAME: ${{ inputs.identity_name || vars.MSIX_IDENTITY_NAME }}
+          STORE_PUBLISHER: ${{ inputs.publisher || vars.MSIX_PUBLISHER }}
+          STORE_PUBLISHER_DISPLAY_NAME: ${{ inputs.publisher_display_name || vars.MSIX_PUBLISHER_DISPLAY_NAME }}
+          STORE_DISPLAY_NAME: ${{ inputs.display_name || vars.MSIX_DISPLAY_NAME }}
+        run: |
+          $package = @{ PackageVersion = $env:PACKAGE_VERSION }
+          if ($env:PACKAGE_MODE -eq 'store') {
+            $package.IdentityName = $env:STORE_IDENTITY_NAME
+            $package.Publisher = $env:STORE_PUBLISHER
+            $package.PublisherDisplayName = $env:STORE_PUBLISHER_DISPLAY_NAME
+            if ($env:STORE_DISPLAY_NAME) { $package.DisplayName = $env:STORE_DISPLAY_NAME }
+          } else {
+            $package.TestIdentity = $true
+          }
+          & ./packaging/windows/bundle-msix.ps1 @package
+      - name: Install and remove isolated test package
+        if: ${{ inputs.mode != 'store' }}
+        shell: powershell
+        run: '& ./packaging/windows/msix/test-install.ps1'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Seyir-msix-${{ inputs.mode || 'test' }}-x64
+          if-no-files-found: error
+          path: |
+            dist/msix/*.msix
+            dist/msix/*.sha256
+            dist/msix/*.json

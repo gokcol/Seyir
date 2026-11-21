@@ -18,6 +18,7 @@ mod open_with_windows;
 mod output;
 mod printing;
 mod theme;
+mod updates;
 mod viewer;
 mod work;
 

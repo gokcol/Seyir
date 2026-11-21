@@ -1,6 +1,6 @@
 [package]
 name = "seyir"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2024"
 rust-version = "1.93"
 description = "A fast, folder-first image viewer for macOS and Windows"
@@ -22,6 +22,9 @@ wgpu = { version = "=27.0.1", default-features = false, features = ["metal", "dx
 winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+ureq = { version = "=3.5.1", default-features = false, features = ["rustls"] }
 objc2 = "=0.6.4"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSCell", "NSControl", "NSImage", "NSImageView", "NSPrintInfo", "NSPrintOperation", "NSResponder", "NSView", "objc2-core-graphics"] }
 objc2-core-foundation = "=0.3.2"
@@ -30,7 +33,7 @@ objc2-foundation = { version = "=0.3.2", default-features = false, features = ["
 objc2-image-io = { version = "=0.3.2", default-features = false, features = ["std", "CGImageSource", "CGImageProperties", "objc2-core-graphics"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "=0.61.3", features = ["Foundation", "Graphics_Imaging", "Storage_Streams", "Win32_System_WinRT", "Win32_System_Com", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Storage_Packaging_Appx", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_Xps", "Win32_UI_Controls_Dialogs", "Win32_UI_Input_KeyboardAndMouse"] }
+windows = { version = "=0.61.3", features = ["ApplicationModel", "Foundation", "Graphics_Imaging", "Services_Store", "Storage_Streams", "Win32_System_WinRT", "Win32_System_Com", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Storage_Packaging_Appx", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_Xps", "Win32_UI_Controls_Dialogs", "Win32_UI_Input_KeyboardAndMouse"] }
 
 [target.'cfg(windows)'.build-dependencies]
 embed-resource = "=3.0.12"

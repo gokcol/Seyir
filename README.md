@@ -17,6 +17,8 @@ Seyir is a native image viewer for macOS and Windows. Open one image and use the
 
 Open **Settings** from the gear, or with **⌘+,** on macOS or **Ctrl+,** on Windows. **Interface** switches among six layouts and controls the folder and properties panels. **Floating Controls** provides an icon-only dock with a separate **More Tools** panel. Image Properties starts off by default. **Playback** sets folder and slideshow transitions independently, along with the slideshow interval and looping.
 
+**Settings → Updates** shows the installed version and checks for newer releases. macOS checks GitHub Releases. Windows uses Microsoft Store update detection, which requires a Store-installed MSIX package.
+
 ## Formats
 
 Seyir ships decoding for JPEG, PNG, WebP, GIF, TIFF, BMP, ICO, PNM, TGA, DDS, Radiance HDR, farbfeld, and SVG/SVGZ. It displays the first frame or page of animated and multi-page files. Native codecs can add HEIC/HEIF, AVIF, JPEG 2000, PSD composites, camera RAW, and other formats available on the system. Windows codec coverage can vary with installed image extensions. Unsupported files report an error in the viewer.
