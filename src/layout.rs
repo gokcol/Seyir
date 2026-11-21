@@ -1,6 +1,6 @@
-//! Layout choices and the per-user preference shared by both platforms.
-use crate::theme;
-use eframe::egui::{self, Color32, FontId, Rect, Stroke, StrokeKind, Ui, pos2, vec2};
+//! Layout choices and per-user settings shared by both platforms.
+use crate::{canvas::TransitionStyle, theme};
+use eframe::egui::{self, Color32, FontId, Rect, Stroke, StrokeKind, Ui, vec2};
 use std::{fs, io, io::Write as _, path::Path, path::PathBuf};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -11,15 +11,17 @@ pub(crate) enum Layout {
     ContactSheet,
     FocusMode,
     ToolRail,
+    FloatingControls,
 }
 
 impl Layout {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::StudioDesk,
         Self::Filmstrip,
         Self::ContactSheet,
         Self::FocusMode,
         Self::ToolRail,
+        Self::FloatingControls,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -29,6 +31,7 @@ impl Layout {
             Self::ContactSheet => "Contact Sheet",
             Self::FocusMode => "Focus Mode",
             Self::ToolRail => "Tool Rail",
+            Self::FloatingControls => "Floating Controls",
         }
     }
 
@@ -39,19 +42,53 @@ impl Layout {
             Self::ContactSheet => "contact-sheet",
             Self::FocusMode => "focus-mode",
             Self::ToolRail => "tool-rail",
+            Self::FloatingControls => "floating-controls",
         }
     }
 
     fn description(self) -> &'static str {
         match self {
-            Self::StudioDesk => "Folder and image info beside the canvas",
+            Self::StudioDesk => "Side panels beside the canvas",
             Self::Filmstrip => "Neighboring images beneath the canvas",
             Self::ContactSheet => "Thumbnail grid with a large preview",
             Self::FocusMode => "Large canvas with floating controls",
             Self::ToolRail => "Vertical controls and a right-side folder",
+            Self::FloatingControls => "Compact toolbar with a second row of tools",
         }
     }
 
+    pub(crate) fn shows_folder_by_default(self) -> bool {
+        !matches!(self, Self::FocusMode | Self::FloatingControls)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct Preferences {
+    pub layout: Layout,
+    pub folder: Option<bool>,
+    pub image_info: bool,
+    pub browse_transition: TransitionStyle,
+    pub slideshow: SlideshowDefaults,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SlideshowDefaults {
+    pub seconds: u32,
+    pub repeat: bool,
+    pub transition: TransitionStyle,
+}
+
+impl Default for SlideshowDefaults {
+    fn default() -> Self {
+        Self {
+            seconds: 3,
+            repeat: true,
+            transition: TransitionStyle::Fade,
+        }
+    }
+}
+
+impl Preferences {
     pub(crate) fn load() -> Self {
         preference_path()
             .as_deref()
@@ -67,14 +104,51 @@ impl Layout {
     }
 
     fn load_at(path: &Path) -> Self {
-        fs::read_to_string(path)
-            .ok()
-            .and_then(|value| {
-                Self::ALL
+        let mut preferences = Self::default();
+        let Ok(value) = fs::read_to_string(path) else {
+            return preferences;
+        };
+        let mut lines = value.lines().map(str::trim);
+        if let Some(id) = lines.next() {
+            preferences.layout = Layout::ALL
+                .into_iter()
+                .find(|layout| layout.id() == id)
+                .unwrap_or_default();
+        }
+        for setting in lines {
+            let Some((key, value)) = setting.split_once('=') else {
+                continue;
+            };
+            let transition = || {
+                TransitionStyle::ALL
                     .into_iter()
-                    .find(|layout| layout.id() == value.trim())
-            })
-            .unwrap_or_default()
+                    .find(|style| style.id() == value)
+            };
+            match key {
+                "folder" => preferences.folder = show_or_hide(value),
+                "image-info" => preferences.image_info = show_or_hide(value).unwrap_or(false),
+                "browse-transition" => {
+                    preferences.browse_transition = transition().unwrap_or_default()
+                }
+                "slideshow-seconds" => {
+                    if let Ok(seconds @ 1..=60) = value.parse() {
+                        preferences.slideshow.seconds = seconds;
+                    }
+                }
+                "slideshow-repeat" => {
+                    if let Ok(repeat) = value.parse() {
+                        preferences.slideshow.repeat = repeat;
+                    }
+                }
+                "slideshow-transition" => {
+                    if let Some(style) = transition() {
+                        preferences.slideshow.transition = style;
+                    }
+                }
+                _ => {}
+            }
+        }
+        preferences
     }
 
     fn save_at(self, path: &Path) -> io::Result<()> {
@@ -83,10 +157,40 @@ impl Layout {
         })?;
         fs::create_dir_all(parent)?;
         let mut replacement = tempfile::NamedTempFile::new_in(parent)?;
-        writeln!(replacement, "{}", self.id())?;
+        writeln!(replacement, "{}", self.layout.id())?;
+        if let Some(visible) = self.folder {
+            writeln!(
+                replacement,
+                "folder={}",
+                if visible { "show" } else { "hide" }
+            )?;
+        }
+        if self.image_info {
+            writeln!(replacement, "image-info=show")?;
+        }
+        writeln!(
+            replacement,
+            "browse-transition={}",
+            self.browse_transition.id()
+        )?;
+        writeln!(replacement, "slideshow-seconds={}", self.slideshow.seconds)?;
+        writeln!(replacement, "slideshow-repeat={}", self.slideshow.repeat)?;
+        writeln!(
+            replacement,
+            "slideshow-transition={}",
+            self.slideshow.transition.id()
+        )?;
         replacement.as_file().sync_all()?;
         replacement.persist(path).map_err(|error| error.error)?;
         Ok(())
+    }
+}
+
+fn show_or_hide(value: &str) -> Option<bool> {
+    match value {
+        "show" => Some(true),
+        "hide" => Some(false),
+        _ => None,
     }
 }
 
@@ -95,59 +199,14 @@ fn preference_path() -> Option<PathBuf> {
     Some(dirs.config_dir().join("layout"))
 }
 
-pub(crate) fn picker(ui: &mut Ui, current: Layout, compact: bool) -> Option<Layout> {
-    let title = FontId::proportional(13.);
-    let ink = ui.visuals().text_color();
-    let accent = ui.visuals().selection.stroke.color;
-    let label = (!compact).then(|| {
-        ui.painter()
-            .layout_no_wrap(current.name().into(), title, ink)
-    });
-    let width = label.as_ref().map_or(33., |label| 40. + label.size().x);
-    let (rect, selector) = ui.allocate_exact_size(vec2(width, 33.), egui::Sense::click());
-    selector.widget_info(|| {
-        egui::WidgetInfo::labeled(
-            egui::WidgetType::Button,
-            selector.enabled(),
-            format!("Layout · {}", current.name()),
-        )
-    });
-    let visuals = ui.style().interact(&selector);
-    let edge = if selector.has_focus() {
-        ui.visuals().selection.stroke
-    } else {
-        visuals.bg_stroke
-    };
-    ui.painter().rect(
-        rect.shrink2(vec2(0., 1.)),
-        8,
-        visuals.weak_bg_fill,
-        edge,
-        StrokeKind::Inside,
-    );
-    diagram(ui, current, rect.left_center() + vec2(16.5, 0.), accent);
-    if let Some(label) = label {
-        let label_at = pos2(rect.left() + 31., rect.center().y - label.size().y / 2.);
-        ui.painter().galley(label_at, label, ink);
+pub(crate) fn choices(ui: &mut Ui, current: Layout) -> Option<Layout> {
+    let mut selection = None;
+    for layout in Layout::ALL {
+        if choice(ui, layout, current) && layout != current {
+            selection = Some(layout);
+        }
     }
-
-    let selection = egui::Popup::menu(&selector)
-        .width(274.)
-        .show(|ui| {
-            ui.set_min_width(266.);
-            let mut selection = None;
-            for layout in Layout::ALL {
-                if choice(ui, layout, current) {
-                    selection = Some(layout);
-                }
-            }
-            selection
-        })
-        .and_then(|popup| popup.inner);
-    selector
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text("Choose a layout");
-    selection.filter(|layout| *layout != current)
+    selection
 }
 
 fn choice(ui: &mut Ui, layout: Layout, current: Layout) -> bool {
@@ -207,13 +266,9 @@ fn choice(ui: &mut Ui, layout: Layout, current: Layout) -> bool {
             Stroke::new(1.5_f32, diagram_ink),
         ));
     }
-    let activated = response
+    response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked();
-    if activated {
-        ui.close();
-    }
-    activated
+        .clicked()
 }
 
 fn diagram(ui: &Ui, layout: Layout, center: egui::Pos2, accent: Color32) {
@@ -246,23 +301,46 @@ fn diagram(ui: &Ui, layout: Layout, center: egui::Pos2, accent: Color32) {
             }
             block(13.75, 2.5, 2.75, 10.);
         }
+        Layout::FloatingControls => {
+            block(4., 9.5, 11., 2.75);
+            block(8., 5., 7., 2.);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Layout;
+    use super::{Layout, Preferences};
 
     #[test]
     fn layout_preference_survives_replacement_and_defaults_when_missing_or_invalid() {
         let directory = tempfile::tempdir().unwrap();
         let setting = directory.path().join("config/layout");
-        assert_eq!(Layout::load_at(&setting), Layout::StudioDesk);
+        assert_eq!(Preferences::load_at(&setting), Preferences::default());
         for layout in Layout::ALL {
-            layout.save_at(&setting).unwrap();
-            assert_eq!(Layout::load_at(&setting), layout);
+            let preferences = Preferences {
+                layout,
+                folder: Some(false),
+                image_info: true,
+                browse_transition: crate::canvas::TransitionStyle::Wipe,
+                slideshow: super::SlideshowDefaults {
+                    seconds: 16,
+                    repeat: false,
+                    transition: crate::canvas::TransitionStyle::Push,
+                },
+            };
+            preferences.save_at(&setting).unwrap();
+            assert_eq!(Preferences::load_at(&setting), preferences);
         }
+        std::fs::write(&setting, "filmstrip\n").unwrap();
+        assert_eq!(
+            Preferences::load_at(&setting),
+            Preferences {
+                layout: Layout::Filmstrip,
+                ..Preferences::default()
+            }
+        );
         std::fs::write(&setting, "unknown layout").unwrap();
-        assert_eq!(Layout::load_at(&setting), Layout::StudioDesk);
+        assert_eq!(Preferences::load_at(&setting), Preferences::default());
     }
 }

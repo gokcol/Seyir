@@ -162,12 +162,16 @@ pub fn folder(path: &Path) -> Result<Vec<Entry>, String> {
         };
         // Keep folder browsing shallow. Links to files and folders are resolved on demand.
         let directory = kind.is_dir() || (kind.is_symlink() && path.is_dir());
+        let name = entry.file_name();
+        if directory && name.as_encoded_bytes().starts_with(b".") {
+            continue;
+        }
         if !directory && !(decode::recognized_path(&path) && (kind.is_file() || path.is_file())) {
             continue;
         }
         entries.push(Entry {
             path,
-            name: entry.file_name().to_string_lossy().into_owned(),
+            name: name.to_string_lossy().into_owned(),
             directory,
             modified: entry.metadata().ok().and_then(|info| info.modified().ok()),
         });

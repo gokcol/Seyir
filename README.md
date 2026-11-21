@@ -2,16 +2,18 @@
 
 Seyir is a native image viewer for macOS and Windows. Open one image and use the arrow keys to browse its neighbors. **Show Folder** opens a sidebar with thumbnails and selects the image already on screen.
 
-- **Open** a file, drop it into the window, or choose **Open folder**. You can also open images from Finder or Explorer.
+- Hover over **File** to open an image or folder, save, export, or print. You can also drop an image into the window or open it from Finder or Explorer. The folder browser starts at your home folder and follows the parent of the image you open.
 - **← / →** browse files in the folder using the selected order. The folder sidebar can sort by natural filename order or most recently modified.
-- **Fit** or **1:1** shows the fitted image or its actual pixels. Zoom from 10% to 1000% with the toolbar or scroll over the image. Drag to pan. Click **Rotate** to turn the image 90° clockwise. Hover over it for left and right turns, a fine-angle control, and reset. From the focused Rotate button, Shift+F10 opens the same controls by keyboard.
-- **Copy Image** puts the full-size image at its displayed angle on the clipboard. View zoom does not change copied dimensions.
-- **Info** shows dimensions, format, file size, modification date, and available EXIF or color profile information. Reveal the source in Finder or Explorer from the same panel.
+- **Fit** or **1:1** shows the fitted image or its actual pixels. Zoom from 10% to 1000% with the toolbar or scroll over the image. Drag to pan. Click **Rotate** to turn the image 90° clockwise. Hover over it for angle controls, Crop, Flip Horizontal, Flip Vertical, and Undo Image Edit. From the focused Rotate button, Shift+F10 opens the same controls by keyboard.
+- **Copy Image** copies the full-size image at its displayed angle. Hover over Copy for **Copy Resized…**. **Save As…** exports PNG, JPEG, or WebP with the same resize choices. Both offer percentages and custom dimensions that preserve the aspect ratio.
+- **Save Image** applies the displayed edits to supported single-image PNG, JPEG, and WebP originals after confirmation. **Print** opens the system print dialog for the displayed image.
+- **Image Properties** shows dimensions, format, file size, modification date, and available EXIF or color profile information. Reveal the source in Finder or Explorer from the same panel.
 - **Save metadata** writes title, description, author, copyright, and comma-separated keywords as embedded XMP in JPEG, PNG, and WebP. It preserves the encoded image and unrelated metadata. Changes are applied atomically and stale edits are rejected. The Info panel explains when a file cannot be edited.
 - **Edit in Bediz** sends supported originals to a Bediz build with file handoff support. For viewer-only formats and manual rotation, choose **Open rendered PNG copy**. Installed older builds offer **Copy and open Bediz**, followed by Paste.
-- **Full Screen** toggles with F11. Escape leaves full screen.
+- Right-click an image to navigate, choose a transition, rotate, copy, edit in Bediz, save, or print.
+- **Slideshow** plays the current folder in order. Change the interval, loop, and transition while it plays. Escape ends the show. **Full Screen** hides the viewer controls and leaves the image context menu available. Escape or F11 returns to the window.
 
-The toolbar’s layout picker switches between **Studio Desk** (the default), **Filmstrip**, **Contact Sheet**, **Focus Mode**, and **Tool Rail**. Seyir remembers the last selected layout on each computer.
+Open **Settings** from the gear, or with **⌘+,** on macOS or **Ctrl+,** on Windows. **Interface** switches among six layouts and controls the folder and properties panels. **Floating Controls** provides an icon-only dock with a separate **More Tools** panel. Image Properties starts off by default. **Playback** sets folder and slideshow transitions independently, along with the slideshow interval and looping.
 
 ## Formats
 

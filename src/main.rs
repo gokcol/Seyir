@@ -6,6 +6,7 @@
 mod bediz;
 mod canvas;
 mod chrome;
+mod crop;
 mod decode;
 mod gallery;
 mod layout;
@@ -14,6 +15,8 @@ mod mac_open;
 mod metadata;
 #[cfg(target_os = "windows")]
 mod open_with_windows;
+mod output;
+mod printing;
 mod theme;
 mod viewer;
 mod work;

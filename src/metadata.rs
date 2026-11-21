@@ -36,7 +36,7 @@ pub(crate) struct ImageMetadata {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Revision {
+pub(crate) struct Revision {
     len: u64,
     modified: Option<SystemTime>,
     created: Option<SystemTime>,
@@ -47,7 +47,7 @@ struct Revision {
 }
 
 impl Revision {
-    fn from(metadata: &Metadata) -> Self {
+    pub(crate) fn from(metadata: &Metadata) -> Self {
         #[cfg(unix)]
         use std::os::unix::fs::MetadataExt;
         Self {
@@ -68,6 +68,26 @@ impl Revision {
             Err("The image changed on disk. Reload its information before editing again.".into())
         }
     }
+}
+
+pub(crate) fn xmp_for_reencoding(bytes: &[u8]) -> Result<Option<Vec<u8>>, String> {
+    let kind = container::Format::detect(bytes)
+        .ok_or_else(|| "Use Save As to export this image.".to_owned())?;
+    let layout = kind.inspect(bytes)?;
+    if let Some(reason) = layout.edit_note {
+        return Err(format!("{reason} Use Save As to export a copy."));
+    }
+    Ok(layout.packet)
+}
+
+pub(crate) fn write_reencoded_xmp(
+    bytes: &[u8],
+    packet: &[u8],
+    out: &mut impl Write,
+) -> Result<(), String> {
+    let kind = container::Format::detect(bytes)
+        .ok_or_else(|| "Cannot embed XMP in the saved image.".to_owned())?;
+    kind.rewrite(bytes, &kind.inspect(bytes)?, packet, out)
 }
 
 pub(crate) fn read(path: &Path) -> Result<ImageMetadata, String> {

@@ -1,4 +1,4 @@
-//! Matched light and dark palettes for the five viewing layouts.
+//! Matched light and dark palettes for the viewing layouts.
 use crate::layout::Layout;
 use eframe::egui::{self, Color32, Stroke};
 
@@ -47,6 +47,12 @@ fn palette(layout: Layout, dark: bool) -> [Color32; 8] {
         ],
         (Layout::ToolRail, true) => [
             0x251f2e, 0x2c2638, 0xb9a9cc, 0x4e435b, 0xd1baff, 0x45355e, 0xf6efff, 0x18151f,
+        ],
+        (Layout::FloatingControls, false) => [
+            0xf4f6f8, 0xfcfdff, 0x56677a, 0xd3dce6, 0x325d91, 0xe2ebf6, 0x21354d, 0x1d2530,
+        ],
+        (Layout::FloatingControls, true) => [
+            0x202934, 0x283443, 0xa9bacd, 0x435468, 0xa8cefb, 0x344b64, 0xf0f6ff, 0x151b24,
         ],
     };
     colors.map(rgb)
