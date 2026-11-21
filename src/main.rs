@@ -7,6 +7,8 @@ mod bediz;
 mod canvas;
 mod chrome;
 mod decode;
+mod gallery;
+mod layout;
 #[cfg(target_os = "macos")]
 mod mac_open;
 mod metadata;

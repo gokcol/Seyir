@@ -2,6 +2,8 @@ use crate::{
     OpenQueue, bediz,
     canvas::{self, Canvas},
     decode::{self, Decoded},
+    gallery,
+    layout::{self, Layout},
     metadata::{self, EditableMetadata, ImageMetadata},
     work::{self, Entry, ImageCache, Latest},
 };
@@ -19,7 +21,7 @@ use std::{
 };
 
 #[path = "viewer_panels.rs"]
-mod panel_ui;
+pub(crate) mod panel_ui;
 
 enum Reply {
     Image(u64, Result<Loaded, String>),
@@ -115,6 +117,8 @@ pub struct Viewer {
     thumbnails: ThumbnailCache,
     canvas: Canvas,
     app_icon: egui::TextureHandle,
+    layout: Layout,
+    next_layout: Option<Layout>,
     info: InfoPane,
     browser: bool,
     sort_newest: bool,
@@ -131,7 +135,8 @@ impl Viewer {
     pub fn new(creation: &eframe::CreationContext<'_>, incoming: OpenQueue) -> Self {
         let ctx = &creation.egui_ctx;
         ctx.options_mut(|options| options.zoom_with_keyboard = false);
-        crate::theme::apply(ctx);
+        let layout = Layout::load();
+        crate::theme::apply(ctx, layout);
         let icon = eframe::icon_data::from_png_bytes(include_bytes!("../assets/seyir.png"))
             .expect("Seyir icon");
         let app_icon = ctx.load_texture(
@@ -217,8 +222,13 @@ impl Viewer {
             thumbnails: ThumbnailCache::new(),
             canvas: Canvas::default(),
             app_icon,
-            info: InfoPane::default(),
-            browser: false,
+            layout,
+            next_layout: None,
+            info: InfoPane {
+                visible: layout == Layout::StudioDesk,
+                ..InfoPane::default()
+            },
+            browser: layout != Layout::FocusMode,
             sort_newest: false,
             focus_folder_file: false,
             clipboard: None,
@@ -458,6 +468,22 @@ impl Viewer {
         }
     }
 
+    fn change_layout(&mut self, ctx: &egui::Context, layout: Layout) {
+        self.layout = layout;
+        crate::theme::apply(ctx, layout);
+        self.browser = layout != Layout::FocusMode;
+        self.info.visible = layout == Layout::StudioDesk;
+        self.focus_folder_file = true;
+        if self.info.visible && self.info.loaded.is_none() {
+            self.read_info();
+        }
+        if let Err(error) = layout.save() {
+            self.report(Err(format!(
+                "Could not save the layout preference: {error}"
+            )));
+        }
+    }
+
     fn pick(&mut self, kind: PickKind) {
         if self.picker.is_some() {
             return;
@@ -588,7 +614,8 @@ impl Viewer {
         if self.picker.is_some() {
             return;
         }
-        let text_focused = ctx.wants_keyboard_input() && self.info.visible;
+        let focused = ctx.memory(|memory| memory.focused());
+        let text_focused = focused.is_some_and(|id| egui::TextEdit::load_state(ctx, id).is_some());
         if ctx.input(|input| input.key_pressed(egui::Key::O) && input.modifiers.command) {
             self.pick(PickKind::Image);
         }
@@ -627,200 +654,197 @@ impl Viewer {
         }
     }
 
-    fn rotation_options(&mut self, ui: &mut egui::Ui) {
-        if ui.button("90° left").clicked() {
-            self.canvas.rotate_by(-90.);
-        }
-        if ui.button("90° right").clicked() {
-            self.canvas.rotate_by(90.);
-        }
-        ui.add(
-            egui::Slider::new(&mut self.canvas.angle, -180.0..=180.0)
-                .suffix("°")
-                .text("Angle"),
-        );
-        if ui.button("Reset rotation").clicked() {
-            self.canvas.angle = 0.;
+    fn layout_picker(&mut self, ui: &mut egui::Ui, compact: bool) {
+        if let Some(selected) = layout::picker(ui, self.layout, compact) {
+            self.next_layout = Some(selected);
+            ui.ctx().request_repaint();
         }
     }
 
-    fn toolbar(&mut self, ui: &mut egui::Ui) {
-        use crate::chrome::{self, Icon, Tile};
+    fn toolbar(&mut self, ui: &mut egui::Ui, floating: bool) {
+        use crate::chrome;
 
-        let has_picture = self.picture.is_some();
-        let show_edit_caption = ui.available_width() >= 800.;
+        let width = ui.available_width();
         chrome::row(ui, |ui| {
-            chrome::brand(ui, &self.app_icon);
-            chrome::group(ui, |ui| {
-                if Tile::new(Icon::OpenImage, "Open image…").show(ui).clicked() {
-                    self.pick(PickKind::Image);
-                }
-                if Tile::new(Icon::OpenFolder, "Open folder…")
-                    .show(ui)
-                    .clicked()
-                {
-                    self.pick(PickKind::Folder);
-                }
-                let toggle = if self.browser {
-                    "Hide Folder"
-                } else {
-                    "Show Folder"
-                };
-                let hint = if self.browser {
-                    "Hide Folder · Close the folder browser"
-                } else {
-                    "Show Folder · Browse the current image’s parent folder"
-                };
-                if Tile::new(Icon::FolderPane, toggle)
-                    .hint(hint)
-                    .enabled(self.folder.is_some())
-                    .selected(self.browser)
-                    .show(ui)
-                    .clicked()
-                {
-                    self.browser = !self.browser;
-                    self.focus_folder_file = true;
-                }
-            });
-            chrome::group(ui, |ui| {
-                if Tile::new(Icon::Previous, "Previous image")
-                    .hint("Previous image · Left arrow")
-                    .enabled(self.neighbor(false).is_some())
-                    .show(ui)
-                    .clicked()
-                {
-                    self.navigate(false);
-                }
-                if Tile::new(Icon::Next, "Next image")
-                    .hint("Next image · Right arrow")
-                    .enabled(self.neighbor(true).is_some())
-                    .show(ui)
-                    .clicked()
-                {
-                    self.navigate(true);
-                }
-            });
-            chrome::group(ui, |ui| {
-                if Tile::new(Icon::ZoomOut, "Zoom out")
-                    .enabled(has_picture)
-                    .show(ui)
-                    .clicked()
-                {
-                    self.canvas.step_zoom(0.8);
-                }
-                if Tile::new(Icon::Fit, "Fit image")
-                    .hint("Fit image · 0")
-                    .enabled(has_picture)
-                    .show(ui)
-                    .clicked()
-                {
-                    self.canvas.fit();
-                }
-                if Tile::new(Icon::Actual, "Actual pixels")
-                    .hint("Actual pixels · 1")
-                    .enabled(has_picture)
-                    .show(ui)
-                    .clicked()
-                {
-                    self.canvas.set_zoom(1.);
-                }
-                if Tile::new(Icon::ZoomIn, "Zoom in")
-                    .enabled(has_picture)
-                    .show(ui)
-                    .clicked()
-                {
-                    self.canvas.step_zoom(1.25);
-                }
-                let rotate = Tile::new(Icon::Rotate, "Rotate right 90°")
-                    .enabled(has_picture)
-                    .button(ui);
-                if rotate.clicked() {
-                    self.canvas.rotate_by(90.);
-                }
-                rotate.on_hover_ui(|ui| self.rotation_options(ui));
-                let options = Tile::new(Icon::RotateOptions, "Rotation options")
-                    .enabled(has_picture)
-                    .show(ui);
-                egui::Popup::menu(&options)
-                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                    .show(|ui| self.rotation_options(ui));
-            });
-            chrome::group(ui, |ui| {
-                if Tile::new(Icon::Copy, "Copy Image")
-                    .enabled(has_picture && !self.copying)
-                    .show(ui)
-                    .clicked()
-                {
-                    self.copy(ui.ctx(), false);
-                }
-                if let Some(compatible) = self.bediz {
-                    if compatible {
-                        let original = self.file.as_deref().is_some_and(bediz_original_supported);
-                        let edit = Tile::new(Icon::Edit, "Edit in Bediz")
-                            .caption(show_edit_caption)
-                            .enabled(has_picture);
-                        if original && self.canvas.angle == 0. {
-                            if edit.show(ui).clicked() {
-                                self.edit(ui.ctx(), false);
-                            }
-                        } else {
-                            let edit = edit.dropdown().show(ui);
-                            egui::Popup::menu(&edit).show(|ui| {
-                                if original && ui.button("Open original").clicked() {
-                                    self.edit(ui.ctx(), false);
-                                    ui.close();
-                                }
-                                if ui.button("Open rendered PNG copy").clicked() {
-                                    self.edit(ui.ctx(), true);
-                                    ui.close();
-                                }
-                            });
-                        }
-                    } else if Tile::new(Icon::Edit, "Copy and Open Bediz")
-                        .hint("Copy and open Bediz · This Bediz build uses Paste to receive images")
-                        .caption(show_edit_caption)
-                        .enabled(has_picture)
-                        .show(ui)
-                        .clicked()
-                    {
-                        self.copy(ui.ctx(), true);
-                    }
-                }
-            });
-            chrome::group(ui, |ui| {
-                if Tile::new(Icon::Info, "Info")
-                    .enabled(self.file.is_some())
-                    .selected(self.info.visible)
-                    .show(ui)
-                    .clicked()
-                {
-                    self.toggle_info();
-                }
-                let full = ui.input(|input| input.viewport().fullscreen == Some(true));
-                let hint = if full {
-                    "Exit full screen · F11"
-                } else {
-                    "Full screen · F11"
-                };
-                if Tile::new(Icon::Fullscreen, "Full Screen")
-                    .hint(hint)
-                    .selected(full)
-                    .show(ui)
-                    .clicked()
-                {
-                    fullscreen(ui.ctx());
-                }
-            });
+            if !floating {
+                chrome::brand(ui, &self.app_icon);
+            }
+            self.layout_picker(ui, floating || width < 950.);
+            self.toolbar_tools(ui, !floating && width >= 870.);
         });
     }
 
-    fn browser(&mut self, ui: &mut egui::Ui) {
+    fn tool_rail(&mut self, ui: &mut egui::Ui) {
+        ui.vertical_centered(|ui| {
+            crate::chrome::brand(ui, &self.app_icon);
+            self.layout_picker(ui, true);
+        });
+        ui.separator();
+        egui::ScrollArea::vertical()
+            .id_salt("tool-rail-scroll")
+            .show(ui, |ui| {
+                ui.vertical_centered(|ui| self.toolbar_tools(ui, false));
+            });
+    }
+
+    fn toolbar_tools(&mut self, ui: &mut egui::Ui, show_edit_caption: bool) {
+        use crate::chrome::{self, Icon, Tile};
+
+        let has_picture = self.picture.is_some();
+        chrome::group(ui, |ui| {
+            if Tile::new(Icon::OpenImage, "Open image…").show(ui).clicked() {
+                self.pick(PickKind::Image);
+            }
+            if Tile::new(Icon::OpenFolder, "Open folder…")
+                .show(ui)
+                .clicked()
+            {
+                self.pick(PickKind::Folder);
+            }
+            let toggle = if self.browser {
+                "Hide Folder"
+            } else {
+                "Show Folder"
+            };
+            let hint = if self.browser {
+                "Hide Folder · Close the folder browser"
+            } else {
+                "Show Folder · Browse the current image’s parent folder"
+            };
+            if Tile::new(Icon::FolderPane, toggle)
+                .hint(hint)
+                .enabled(self.folder.is_some())
+                .selected(self.browser && self.folder.is_some())
+                .show(ui)
+                .clicked()
+            {
+                self.browser = !self.browser;
+                self.focus_folder_file = true;
+            }
+        });
+        chrome::group(ui, |ui| {
+            if Tile::new(Icon::Previous, "Previous image")
+                .hint("Previous image · Left arrow")
+                .enabled(self.neighbor(false).is_some())
+                .show(ui)
+                .clicked()
+            {
+                self.navigate(false);
+            }
+            if Tile::new(Icon::Next, "Next image")
+                .hint("Next image · Right arrow")
+                .enabled(self.neighbor(true).is_some())
+                .show(ui)
+                .clicked()
+            {
+                self.navigate(true);
+            }
+        });
+        chrome::group(ui, |ui| {
+            if Tile::new(Icon::ZoomOut, "Zoom out")
+                .enabled(has_picture)
+                .show(ui)
+                .clicked()
+            {
+                self.canvas.step_zoom(0.8);
+            }
+            if Tile::new(Icon::Fit, "Fit image")
+                .hint("Fit image · 0")
+                .enabled(has_picture)
+                .show(ui)
+                .clicked()
+            {
+                self.canvas.fit();
+            }
+            if Tile::new(Icon::Actual, "Actual pixels")
+                .hint("Actual pixels · 1")
+                .enabled(has_picture)
+                .show(ui)
+                .clicked()
+            {
+                self.canvas.set_zoom(1.);
+            }
+            if Tile::new(Icon::ZoomIn, "Zoom in")
+                .enabled(has_picture)
+                .show(ui)
+                .clicked()
+            {
+                self.canvas.step_zoom(1.25);
+            }
+            chrome::rotation(ui, &mut self.canvas, has_picture);
+        });
+        chrome::group(ui, |ui| {
+            if Tile::new(Icon::Copy, "Copy Image")
+                .enabled(has_picture && !self.copying)
+                .show(ui)
+                .clicked()
+            {
+                self.copy(ui.ctx(), false);
+            }
+            if let Some(compatible) = self.bediz {
+                if compatible {
+                    let original = self.file.as_deref().is_some_and(bediz_original_supported);
+                    let edit = Tile::new(Icon::Edit, "Edit in Bediz")
+                        .caption(show_edit_caption)
+                        .enabled(has_picture);
+                    if original && self.canvas.angle == 0. {
+                        if edit.show(ui).clicked() {
+                            self.edit(ui.ctx(), false);
+                        }
+                    } else {
+                        let edit = edit.dropdown().show(ui);
+                        egui::Popup::menu(&edit).show(|ui| {
+                            if original && ui.button("Open original").clicked() {
+                                self.edit(ui.ctx(), false);
+                                ui.close();
+                            }
+                            if ui.button("Open rendered PNG copy").clicked() {
+                                self.edit(ui.ctx(), true);
+                                ui.close();
+                            }
+                        });
+                    }
+                } else if Tile::new(Icon::Edit, "Copy and Open Bediz")
+                    .hint("Copy and open Bediz · This Bediz build uses Paste to receive images")
+                    .caption(show_edit_caption)
+                    .enabled(has_picture)
+                    .show(ui)
+                    .clicked()
+                {
+                    self.copy(ui.ctx(), true);
+                }
+            }
+        });
+        chrome::group(ui, |ui| {
+            if Tile::new(Icon::Info, "Info")
+                .enabled(self.file.is_some())
+                .selected(self.info.visible && self.file.is_some())
+                .show(ui)
+                .clicked()
+            {
+                self.toggle_info();
+            }
+            let full = ui.input(|input| input.viewport().fullscreen == Some(true));
+            let hint = if full {
+                "Exit full screen · F11"
+            } else {
+                "Full screen · F11"
+            };
+            if Tile::new(Icon::Fullscreen, "Full Screen")
+                .hint(hint)
+                .selected(full)
+                .show(ui)
+                .clicked()
+            {
+                fullscreen(ui.ctx());
+            }
+        });
+    }
+
+    fn folder_title(&self, ui: &mut egui::Ui) {
         use panel_ui::Glyph;
-        const ROW_HEIGHT: f32 = 43.;
         let Some(folder) = &self.folder else {
             panel_ui::title(ui, Glyph::Folder, "Folder", None);
-            ui.add_space(9.);
-            ui.weak("Open a folder to browse its images.");
             return;
         };
         let folder_name = path_name(folder);
@@ -831,34 +855,44 @@ impl Viewer {
             "Folder",
             Some((&folder_name, &folder_path)),
         );
-        ui.add_space(10.);
+    }
+
+    fn folder_actions(&mut self, ui: &mut egui::Ui) -> Option<PathBuf> {
+        use panel_ui::Glyph;
+        let parent = self
+            .folder
+            .as_deref()
+            .and_then(Path::parent)
+            .map(Path::to_owned);
         let mut open_folder = None;
-        let mut open_file = None;
-        let parent = folder.parent().map(Path::to_owned);
         let before = self.sort_newest;
         let mut refresh = false;
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled_ui(parent.is_some(), |ui| {
-                    panel_ui::action(ui, Glyph::Up, "Parent folder", None, false)
-                })
-                .inner
-                .clicked()
-            {
-                open_folder = parent;
-            }
-            let refresh_slot = 28. + ui.spacing().item_spacing.x;
-            egui::ComboBox::from_id_salt("folder-order")
-                .width((ui.available_width() - refresh_slot).max(61.))
-                .truncate()
-                .selected_text(if before { "Newest" } else { "Name" })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut self.sort_newest, false, "Name");
-                    ui.selectable_value(&mut self.sort_newest, true, "Newest first");
-                })
-                .response
-                .on_hover_text("Folder sort order");
-            refresh = panel_ui::action(ui, Glyph::Refresh, "Refresh folder", None, false).clicked();
+        ui.scope(|ui| {
+            ui.spacing_mut().interact_size.y = 28.;
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled_ui(parent.is_some(), |ui| {
+                        panel_ui::action(ui, Glyph::Up, "Parent folder", None, false)
+                    })
+                    .inner
+                    .clicked()
+                {
+                    open_folder = parent;
+                }
+                let refresh_slot = 28. + ui.spacing().item_spacing.x;
+                egui::ComboBox::from_id_salt("folder-order")
+                    .width((ui.available_width() - refresh_slot).clamp(61., 116.))
+                    .truncate()
+                    .selected_text(if before { "Newest" } else { "Name" })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.sort_newest, false, "Name");
+                        ui.selectable_value(&mut self.sort_newest, true, "Newest first");
+                    })
+                    .response
+                    .on_hover_text("Folder sort order");
+                refresh =
+                    panel_ui::action(ui, Glyph::Refresh, "Refresh folder", None, false).clicked();
+            });
         });
         if refresh {
             self.refresh_folder();
@@ -867,6 +901,22 @@ impl Viewer {
             work::sort_entries(&mut self.entries, self.sort_newest);
             self.focus_folder_file = true;
             self.prepare_neighbors();
+        }
+        open_folder
+    }
+
+    fn browser(&mut self, ui: &mut egui::Ui) {
+        use panel_ui::Glyph;
+        const ROW_HEIGHT: f32 = 43.;
+        self.folder_title(ui);
+        ui.add_space(9.);
+        if self.folder.is_none() {
+            ui.weak("Open a folder to browse its images.");
+            return;
+        }
+        if let Some(parent) = self.folder_actions(ui) {
+            self.open_folder(parent);
+            return;
         }
         ui.add_space(5.);
         ui.separator();
@@ -997,36 +1047,93 @@ impl Viewer {
             }
             chosen
         });
+        self.request_thumbnails(missing);
+        if let Some((path, directory)) = clicked.inner {
+            if directory {
+                self.open_folder(path);
+            } else {
+                self.open_file(path);
+            }
+        }
+    }
+
+    fn request_thumbnails(&mut self, missing: Vec<PathBuf>) {
         if !self.thumbnails.busy && !missing.is_empty() {
             self.thumbnails.busy = true;
             self.thumbs.submit(missing);
         }
-        if let Some((path, directory)) = clicked.inner {
-            if directory {
-                open_folder = Some(path);
-            } else {
-                open_file = Some(path);
+    }
+
+    fn thumbnail_browser(&mut self, ui: &mut egui::Ui, grid: bool) {
+        if grid {
+            self.folder_title(ui);
+            ui.add_space(9.);
+            if let Some(parent) = self.folder_actions(ui) {
+                self.open_folder(parent);
+                return;
+            }
+        } else {
+            let name = self.folder.as_deref().map(path_name).unwrap_or_default();
+            let actions = ui.horizontal(|ui| {
+                let name_width = (ui.available_width() - 204.).max(56.);
+                ui.add_sized(
+                    [name_width, 28.],
+                    egui::Label::new(RichText::new(&name).strong()).truncate(),
+                )
+                .on_hover_text(&name);
+                self.folder_actions(ui)
+            });
+            if let Some(parent) = actions.inner {
+                self.open_folder(parent);
+                return;
             }
         }
-        if let Some(path) = open_folder {
-            self.open_folder(path);
+        ui.add_space(5.);
+        if self.entries.is_empty() {
+            ui.weak("There are no images or folders to show.");
+            return;
         }
-        if let Some(path) = open_file {
-            self.open_file(path);
+        let focus = std::mem::take(&mut self.focus_folder_file);
+        let show = if grid {
+            gallery::contact_sheet
+        } else {
+            gallery::filmstrip
+        };
+        let outcome = show(
+            ui,
+            &self.entries,
+            self.file.as_deref(),
+            &self.thumbnails.images,
+            focus,
+        );
+        self.request_thumbnails(outcome.missing);
+        if let Some((path, directory)) = outcome.selected {
+            if directory {
+                self.open_folder(path);
+            } else {
+                self.open_file(path);
+            }
         }
     }
 
-    fn inspector(&mut self, ui: &mut egui::Ui) {
+    fn inspector(&mut self, ui: &mut egui::Ui, floating: bool) {
         use panel_ui::Glyph;
         let path = self.file.clone();
         let filename = path.as_deref().map(path_name);
         let file_hint = path.as_ref().map(|path| path.display().to_string());
-        panel_ui::title(
-            ui,
-            Glyph::Info,
-            "Image info",
-            filename.as_deref().zip(file_hint.as_deref()),
-        );
+        if floating {
+            if let Some((name, hint)) = filename.as_deref().zip(file_hint.as_deref()) {
+                ui.add(egui::Label::new(RichText::new(name).weak()).truncate())
+                    .on_hover_text(hint);
+            }
+        } else {
+            panel_ui::title(
+                ui,
+                Glyph::Info,
+                "Image info",
+                filename.as_deref().zip(file_hint.as_deref()),
+            );
+        }
         if let Some(path) = &path {
             ui.add_space(8.);
             ui.horizontal_wrapped(|ui| {
@@ -1165,6 +1272,9 @@ impl Viewer {
 
 impl eframe::App for Viewer {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        if let Some(layout) = self.next_layout.take() {
+            self.change_layout(ctx, layout);
+        }
         self.poll_picker(ctx);
         self.receive(ctx);
         let path = self
@@ -1189,11 +1299,26 @@ impl eframe::App for Viewer {
         }
         self.shortcuts(ctx);
 
-        egui::TopBottomPanel::top("toolbar")
-            .frame(crate::theme::bar(ctx, 7))
-            .show(ctx, |ui| self.toolbar(ui));
+        self.workspace(ctx);
+    }
+}
+
+impl Viewer {
+    fn workspace(&mut self, ctx: &egui::Context) {
+        use crate::theme;
+
+        let layout = self.layout;
+        let window_width = ctx.content_rect().width();
+        if !matches!(layout, Layout::ToolRail | Layout::FocusMode) {
+            egui::TopBottomPanel::top("toolbar")
+                .frame(theme::bar(
+                    ctx,
+                    if layout == Layout::StudioDesk { 9 } else { 7 },
+                ))
+                .show(ctx, |ui| self.toolbar(ui, false));
+        }
         egui::TopBottomPanel::bottom("status")
-            .frame(crate::theme::bar(ctx, 5))
+            .frame(theme::bar(ctx, 5))
             .show(ctx, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     if let Some(path) = &self.file {
@@ -1219,60 +1344,156 @@ impl eframe::App for Viewer {
                     }
                 });
             });
-        if self.browser {
-            egui::SidePanel::left("folder")
-                .default_width(235.)
-                .width_range(165. ..=390.)
-                .show(ctx, |ui| self.browser(ui));
+
+        if layout == Layout::ToolRail {
+            egui::SidePanel::left("tool-rail")
+                .exact_width(54.)
+                .frame(theme::bar(ctx, 6).inner_margin(egui::Margin::symmetric(4, 6)))
+                .show(ctx, |ui| self.tool_rail(ui));
         }
-        if self.info.visible {
-            egui::SidePanel::right("image-info")
-                .default_width(255.)
-                .width_range(200. ..=390.)
-                .show(ctx, |ui| self.inspector(ui));
+        let folder = self.browser && self.folder.is_some();
+        let info = self.info.visible && self.file.is_some();
+        if folder {
+            match layout {
+                Layout::StudioDesk => {
+                    egui::SidePanel::left("studio-folder")
+                        .default_width(216.)
+                        .width_range(166. ..=(window_width * 0.29).clamp(166., 360.))
+                        .frame(theme::bar(ctx, 12))
+                        .show(ctx, |ui| self.browser(ui));
+                }
+                Layout::Filmstrip => {
+                    egui::TopBottomPanel::bottom("filmstrip")
+                        .exact_height(gallery::FILMSTRIP_HEIGHT + 48.)
+                        .frame(theme::bar(ctx, 6))
+                        .show(ctx, |ui| self.thumbnail_browser(ui, false));
+                }
+                Layout::ContactSheet => {
+                    egui::SidePanel::left("contact-sheet")
+                        .default_width((window_width * 0.36).clamp(230., 470.))
+                        .width_range(230. ..=(window_width * 0.58).clamp(230., 520.))
+                        .frame(theme::bar(ctx, 12))
+                        .show(ctx, |ui| self.thumbnail_browser(ui, true));
+                }
+                Layout::ToolRail => {
+                    egui::SidePanel::right("rail-folder")
+                        .default_width(234.)
+                        .width_range(170. ..=390.)
+                        .frame(theme::bar(ctx, 12))
+                        .show(ctx, |ui| self.browser(ui));
+                }
+                Layout::FocusMode => {}
+            }
         }
-        egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(crate::theme::CANVAS))
-            .show(ctx, |ui| {
-                if let Some((image, texture)) = &self.picture {
-                    self.canvas.paint(
-                        ui,
-                        texture.id(),
-                        [image.pixels.width(), image.pixels.height()],
-                    );
+        if info && layout == Layout::StudioDesk {
+            egui::SidePanel::right("studio-image-info")
+                .default_width(250.)
+                .width_range(200. ..=(window_width * 0.34).clamp(200., 390.))
+                .frame(theme::bar(ctx, 12))
+                .show(ctx, |ui| self.inspector(ui, false));
+        }
+
+        let mut canvas_frame = egui::Frame::new().fill(theme::canvas(ctx, layout));
+        if layout == Layout::FocusMode {
+            canvas_frame = canvas_frame.inner_margin(egui::Margin {
+                top: if folder { 122 } else { 0 },
+                bottom: if ctx.content_rect().width() < 654. {
+                    108
                 } else {
-                    ui.add_space((ui.available_height() * 0.5 - 74.).max(0.));
-                    ui.vertical_centered(|ui| {
-                        if self.loading {
-                            ui.spinner();
-                            ui.label(
-                                RichText::new("Opening image…").color(crate::theme::CANVAS_INK),
-                            );
-                        } else if self.error && self.file.is_some() {
-                            ui.label(RichText::new(&self.status).color(crate::theme::CANVAS_INK));
-                        } else {
-                            ui.image((self.app_icon.id(), Vec2::splat(76.)));
-                            ui.add_space(8.);
-                            let open = egui::Button::new(
-                                RichText::new("Open an image")
-                                    .strong()
-                                    .color(Color32::from_rgb(219, 254, 251)),
-                            )
-                            .fill(Color32::from_rgb(36, 73, 86))
-                            .corner_radius(8)
-                            .min_size(egui::vec2(136., 36.));
-                            if ui.add(open).clicked() {
-                                self.pick(PickKind::Image);
-                            }
-                            ui.label(
-                                RichText::new("or drop it here")
-                                    .color(crate::theme::CANVAS_INK)
-                                    .size(12.),
-                            );
-                        }
+                    70
+                },
+                ..egui::Margin::ZERO
+            });
+        }
+        let stage = egui::CentralPanel::default()
+            .frame(canvas_frame)
+            .show(ctx, |ui| self.image_stage(ui))
+            .response
+            .rect;
+        if layout == Layout::FocusMode {
+            self.focus_tools(ctx, stage, folder);
+        }
+        if info && layout != Layout::StudioDesk {
+            let mut open = true;
+            egui::Window::new("Image info")
+                .id(egui::Id::new("floating-image-info"))
+                .open(&mut open)
+                .default_pos(stage.right_top() + egui::vec2(-270., 10.))
+                .constrain_to(stage)
+                .default_width(246.)
+                .min_width(204.)
+                .max_height((stage.height() - 30.).max(140.))
+                .frame(theme::floating(ctx))
+                .show(ctx, |ui| self.inspector(ui, true));
+            self.info.visible = open;
+        }
+    }
+
+    fn focus_tools(&mut self, ctx: &egui::Context, stage: egui::Rect, folder: bool) {
+        use crate::theme;
+
+        if folder {
+            egui::Area::new(egui::Id::new("focus-folder"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(stage.left_top() + egui::vec2(10., 10.))
+                .constrain_to(stage)
+                .show(ctx, |ui| {
+                    theme::floating(ctx).show(ui, |ui| {
+                        ui.set_width((stage.width() - 38.).clamp(290., 482.));
+                        self.thumbnail_browser(ui, false);
                     });
+                });
+        }
+        egui::Area::new(egui::Id::new("focus-tools"))
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::CENTER_BOTTOM)
+            .fixed_pos(stage.center_bottom() - egui::vec2(0., 12.))
+            .constrain_to(stage)
+            .show(ctx, |ui| {
+                theme::floating(ctx).show(ui, |ui| {
+                    ui.set_width((stage.width() - 36.).clamp(300., 636.));
+                    self.toolbar(ui, true);
+                });
+            });
+    }
+
+    fn image_stage(&mut self, ui: &mut egui::Ui) {
+        if let Some((image, texture)) = &self.picture {
+            self.canvas.paint(
+                ui,
+                texture.id(),
+                [image.pixels.width(), image.pixels.height()],
+            );
+        } else {
+            ui.add_space((ui.available_height() * 0.5 - 74.).max(0.));
+            ui.vertical_centered(|ui| {
+                if self.loading {
+                    ui.spinner();
+                    ui.label(RichText::new("Opening image…").color(crate::theme::CANVAS_INK));
+                } else if self.error && self.file.is_some() {
+                    ui.label(RichText::new(&self.status).color(crate::theme::CANVAS_INK));
+                } else {
+                    ui.image((self.app_icon.id(), Vec2::splat(76.)));
+                    ui.add_space(8.);
+                    let open = egui::Button::new(
+                        RichText::new("Open an image")
+                            .strong()
+                            .color(Color32::from_rgb(219, 254, 251)),
+                    )
+                    .fill(Color32::from_rgb(36, 73, 86))
+                    .corner_radius(8)
+                    .min_size(egui::vec2(136., 36.));
+                    if ui.add(open).clicked() {
+                        self.pick(PickKind::Image);
+                    }
+                    ui.label(
+                        RichText::new("or drop it here")
+                            .color(crate::theme::CANVAS_INK)
+                            .size(12.),
+                    );
                 }
             });
+        }
     }
 }
 

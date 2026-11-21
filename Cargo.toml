@@ -9,6 +9,7 @@ description = "A fast, folder-first image viewer for macOS and Windows"
 arboard = "=3.7.0"
 chrono = "=0.4.45"
 crc32fast = "=1.5.2"
+directories = "=6.0.0"
 eframe = { version = "=0.33.3", default-features = false, features = ["wgpu", "default_fonts", "accesskit"] }
 flate2 = "=1.1.10"
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp", "bmp", "tiff", "gif", "ico", "pnm", "tga", "dds", "hdr", "ff"] }
@@ -20,7 +21,6 @@ wgpu = { version = "=27.0.1", default-features = false, features = ["metal", "dx
 winit = { version = "=0.30.13", default-features = false, features = ["rwh_06"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-directories = "=6.0.0"
 objc2 = "=0.6.4"
 objc2-core-foundation = "=0.3.2"
 objc2-core-graphics = "=0.3.2"

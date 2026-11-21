@@ -40,7 +40,6 @@ impl Canvas {
             egui::Sense::drag(),
         );
         let painter = ui.painter().with_clip_rect(view);
-        painter.rect_filled(view, 0, crate::theme::CANVAS);
         let image = egui::vec2(size[0] as f32, size[1] as f32);
         let ratio = ui.ctx().pixels_per_point();
         let (sin, cos) = self.angle.to_radians().sin_cos();

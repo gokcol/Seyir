@@ -1,4 +1,5 @@
 //! Compact pictograms and accessible controls for Seyir’s toolbar.
+use crate::canvas::Canvas;
 use eframe::egui::{
     self, Color32, FontId, Painter, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui,
     Vec2, WidgetInfo, WidgetType, pos2, vec2,
@@ -21,7 +22,7 @@ pub(crate) enum Icon {
     Actual,
     ZoomIn,
     Rotate,
-    RotateOptions,
+    RotateLeft,
     Copy,
     Edit,
     Info,
@@ -36,6 +37,7 @@ pub(crate) struct Tile<'a> {
     selected: Option<bool>,
     caption: bool,
     dropdown: bool,
+    min_width: f32,
 }
 
 impl<'a> Tile<'a> {
@@ -48,6 +50,7 @@ impl<'a> Tile<'a> {
             selected: None,
             caption: false,
             dropdown: false,
+            min_width: 0.,
         }
     }
 
@@ -76,6 +79,11 @@ impl<'a> Tile<'a> {
         self
     }
 
+    fn min_width(mut self, width: f32) -> Self {
+        self.min_width = width;
+        self
+    }
+
     pub(crate) fn show(self, ui: &mut Ui) -> Response {
         let hint = self.hint.unwrap_or(self.label);
         let response = self.button(ui);
@@ -96,12 +104,11 @@ impl<'a> Tile<'a> {
         });
         let caption_width = galley.as_ref().map_or(0., |label| label.size().x + 6.);
         let dropdown_width = if self.dropdown { 10. } else { 0. };
-        let icon_width = if matches!(self.icon, Icon::RotateOptions) {
-            20.
-        } else {
-            33.
-        };
-        let size = vec2(icon_width + caption_width + dropdown_width, TILE_HEIGHT);
+        let icon_width = 33.0_f32;
+        let size = vec2(
+            (icon_width + caption_width + dropdown_width).max(self.min_width),
+            TILE_HEIGHT,
+        );
         let response = ui
             .add_enabled_ui(self.enabled, |ui| {
                 ui.allocate_exact_size(size, Sense::click())
@@ -209,6 +216,7 @@ pub(crate) fn row(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
 }
 
 pub(crate) fn group(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
+    let vertical = ui.layout().is_vertical();
     let theme = ui.visuals();
     let edge = theme.panel_fill.lerp_to_gamma(theme.text_color(), 0.12);
     let color = theme.panel_fill.lerp_to_gamma(theme.extreme_bg_color, 0.34);
@@ -218,6 +226,13 @@ pub(crate) fn group(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
         .stroke(Stroke::new(GROUP_STROKE, edge))
         .inner_margin(egui::Margin::symmetric(4, GROUP_MARGIN_Y))
         .show(ui, |ui| {
+            if vertical {
+                ui.vertical_centered(|ui| {
+                    ui.spacing_mut().item_spacing.y = 4.;
+                    add(ui);
+                });
+                return;
+            }
             let size = vec2(ui.available_width(), TILE_HEIGHT);
             let layout = egui::Layout::left_to_right(egui::Align::Center);
             ui.allocate_ui_with_layout(size, layout, |ui| {
@@ -231,6 +246,113 @@ pub(crate) fn brand(ui: &mut Ui, texture: &egui::TextureHandle) -> Response {
     ui.add(egui::Image::new((texture.id(), Vec2::splat(ROW_HEIGHT))).alt_text("Seyir"))
 }
 
+pub(crate) fn rotation(ui: &mut Ui, canvas: &mut Canvas, enabled: bool) -> Response {
+    let rotate = Tile::new(Icon::Rotate, "Rotate right 90°")
+        .enabled(enabled)
+        .button(ui);
+    if rotate.clicked() {
+        canvas.rotate_by(90.);
+    }
+    if !enabled {
+        return rotate;
+    }
+
+    const PANEL_WIDTH: f32 = 218.;
+    let accent = Icon::Rotate.ink(ui);
+    let frame = egui::Frame::popup(ui.style())
+        .corner_radius(13)
+        .inner_margin(12)
+        .fill(ui.visuals().window_fill().lerp_to_gamma(accent, 0.035));
+    let align = if ui.layout().is_vertical() {
+        egui::RectAlign::RIGHT_START
+    } else {
+        egui::RectAlign::BOTTOM_START
+    };
+    let keyboard = rotate.has_focus()
+        && ui.input_mut(|input| input.consume_key(egui::Modifiers::SHIFT, egui::Key::F10));
+    let keyboard_popup = egui::Popup::from_response(&rotate)
+        .open_memory(keyboard.then_some(egui::SetOpenCommand::Bool(true)))
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .align(align)
+        .gap(3.)
+        .frame(frame);
+    if keyboard_popup
+        .show(|ui| rotation_panel(ui, canvas, accent, PANEL_WIDTH, keyboard))
+        .is_none()
+    {
+        let mut tooltip = egui::Tooltip::for_enabled(&rotate).width(PANEL_WIDTH);
+        tooltip.popup = tooltip.popup.frame(frame).align(align).gap(3.);
+        tooltip.show(|ui| rotation_panel(ui, canvas, accent, PANEL_WIDTH, false));
+    }
+    rotate
+}
+
+fn rotation_panel(ui: &mut Ui, canvas: &mut Canvas, accent: Color32, width: f32, focus_left: bool) {
+    ui.set_min_width(width);
+    ui.spacing_mut().item_spacing = vec2(8., 7.);
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Rotation").strong().size(14.));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let reset = ui.add_enabled(
+                canvas.angle != 0.,
+                egui::Button::new("Reset rotation").frame(false),
+            );
+            if reset.clicked() {
+                canvas.angle = 0.;
+            }
+        });
+    });
+
+    let button_width = (width - ui.spacing().item_spacing.x) * 0.5;
+    ui.horizontal(|ui| {
+        let left = Tile::new(Icon::RotateLeft, "90° left")
+            .caption(true)
+            .min_width(button_width)
+            .button(ui);
+        if focus_left {
+            left.request_focus();
+        }
+        if left.clicked() {
+            canvas.rotate_by(-90.);
+        }
+        if Tile::new(Icon::Rotate, "90° right")
+            .caption(true)
+            .min_width(button_width)
+            .button(ui)
+            .clicked()
+        {
+            canvas.rotate_by(90.);
+        }
+    });
+
+    let angle_label = ui
+        .horizontal(|ui| {
+            let angle_label = ui.label(egui::RichText::new("Fine angle").weak()).id;
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_sized(
+                    [62., 24.],
+                    egui::DragValue::new(&mut canvas.angle)
+                        .range(-180.0..=180.0)
+                        .speed(0.2)
+                        .fixed_decimals(1)
+                        .suffix("°"),
+                )
+                .labelled_by(angle_label);
+            });
+            angle_label
+        })
+        .inner;
+    ui.spacing_mut().slider_width = width;
+    ui.visuals_mut().selection.bg_fill = ui.visuals().window_fill().lerp_to_gamma(accent, 0.43);
+    ui.add(
+        egui::Slider::new(&mut canvas.angle, -180.0..=180.0)
+            .fixed_decimals(1)
+            .show_value(false)
+            .trailing_fill(true),
+    )
+    .labelled_by(angle_label);
+}
+
 impl Icon {
     fn ink(self, ui: &Ui) -> Color32 {
         let (light, dark) = match self {
@@ -239,7 +361,7 @@ impl Icon {
                 ([10, 108, 106], [116, 229, 215])
             }
             Self::Previous | Self::Next => ([58, 78, 123], [170, 190, 235]),
-            Self::Rotate | Self::RotateOptions => ([107, 61, 166], [203, 167, 255]),
+            Self::Rotate | Self::RotateLeft => ([107, 61, 166], [203, 167, 255]),
             Self::OpenImage | Self::Copy | Self::Info => ([44, 84, 166], [149, 188, 255]),
         };
         let [r, g, b] = if ui.visuals().dark_mode { dark } else { light };
@@ -247,7 +369,12 @@ impl Icon {
     }
 
     fn paint(self, painter: &Painter, center: Pos2, ink: Color32) {
-        let point = |x, y| center + vec2(x - 12., y - 12.) * 0.9;
+        let direction = if matches!(self, Self::RotateLeft) {
+            -1.
+        } else {
+            1.
+        };
+        let point = |x, y| center + vec2((x - 12.) * direction, y - 12.) * 0.9;
         let stroke = Stroke::new(1.65_f32, ink);
         let line = |points: &[(f32, f32)]| {
             painter.add(Shape::line(
@@ -331,7 +458,7 @@ impl Icon {
                     ink,
                 );
             }
-            Self::Rotate => {
+            Self::Rotate | Self::RotateLeft => {
                 let arc = (0..=16)
                     .map(|step| {
                         let angle = (40. + 265. * step as f32 / 16.).to_radians();
@@ -343,7 +470,6 @@ impl Icon {
                 line(&[(12.1, 6.2), tip, (16.7, 2.8)]);
                 dot(12., 12., 1.6);
             }
-            Self::RotateOptions => line(&[(8.5, 10.5), (12., 14.), (15.5, 10.5)]),
             Self::Copy => {
                 line(&[
                     (7.5, 16.5),
@@ -407,5 +533,60 @@ mod tests {
                 });
             });
         });
+    }
+
+    #[test]
+    fn rotation_panel_opens_on_hover_and_accepts_pointer_clicks() {
+        let ctx = egui::Context::default();
+        let mut canvas = Canvas::default();
+        let frame = |canvas: &mut Canvas, time, events| {
+            let mut anchor = Rect::NOTHING;
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(640., 480.))),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::TopBottomPanel::top("rotation-test").show(ctx, |ui| {
+                        ui.horizontal(|ui| anchor = rotation(ui, canvas, true).rect);
+                    });
+                },
+            );
+            let left = output.shapes.iter().find_map(|shape| match &shape.shape {
+                Shape::Text(text) if text.galley.job.text == "90° left" => {
+                    Some(text.pos + text.galley.size() * 0.5)
+                }
+                _ => None,
+            });
+            (anchor.center(), left)
+        };
+        let click = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+
+        let (rotate, left) = frame(&mut canvas, 0., vec![]);
+        assert!(left.is_none());
+        frame(&mut canvas, 0.2, vec![egui::Event::PointerMoved(rotate)]);
+        let _ = frame(&mut canvas, 0.9, vec![]);
+        let (_, left) = frame(&mut canvas, 1., vec![]);
+        let left = left.expect("dwelling over Rotate should show the left turn");
+        assert_eq!(canvas.angle, 0.);
+
+        let (_, open) = frame(&mut canvas, 1.1, vec![egui::Event::PointerMoved(left)]);
+        assert!(open.is_some(), "moving into the panel must keep it open");
+        frame(&mut canvas, 1.2, vec![click(left, true)]);
+        frame(&mut canvas, 1.25, vec![click(left, false)]);
+        assert_eq!(canvas.angle, -90.);
+
+        frame(&mut canvas, 1.4, vec![egui::Event::PointerMoved(rotate)]);
+        frame(&mut canvas, 1.5, vec![click(rotate, true)]);
+        let (_, open) = frame(&mut canvas, 1.55, vec![click(rotate, false)]);
+        assert_eq!(canvas.angle, 0.);
+        assert!(open.is_none(), "a normal click only rotates the image");
     }
 }

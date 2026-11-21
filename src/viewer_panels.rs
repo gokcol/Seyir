@@ -2,7 +2,7 @@
 use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 
 #[derive(Clone, Copy)]
-pub(super) enum Glyph {
+pub(crate) enum Glyph {
     Folder,
     Image,
     Info,
@@ -14,7 +14,7 @@ pub(super) enum Glyph {
     Chevron,
 }
 
-pub(super) fn glyph(ui: &egui::Ui, rect: Rect, kind: Glyph, ink: Color32) {
+pub(crate) fn glyph(ui: &egui::Ui, rect: Rect, kind: Glyph, ink: Color32) {
     let painter = ui.painter();
     let scale = rect.size().min_elem() / 20.;
     let pos = |x: f32, y: f32| rect.center() + Vec2::new(x, y) * scale;
@@ -175,7 +175,7 @@ pub(super) fn action(
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-pub(super) fn clipped_text(ui: &egui::Ui, rect: Rect, text: &str, size: f32, ink: Color32) {
+pub(crate) fn clipped_text(ui: &egui::Ui, rect: Rect, text: &str, size: f32, ink: Color32) {
     let mut job =
         egui::text::LayoutJob::simple_singleline(text.into(), FontId::proportional(size), ink);
     job.wrap.max_width = rect.width().max(1.);
