@@ -144,6 +144,63 @@ mod platform {
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn windows_executable(path: PathBuf) -> Option<PathBuf> {
+    const NAMES: [&str; 2] = ["Bediz.exe", "MyImage.exe"];
+
+    if path.is_dir() {
+        return NAMES
+            .into_iter()
+            .map(|name| path.join(name))
+            .find(|candidate| candidate.is_file());
+    }
+
+    let name = path.file_name()?.to_str()?;
+    (path.is_file()
+        && NAMES
+            .iter()
+            .any(|supported| name.eq_ignore_ascii_case(supported)))
+    .then_some(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_directory_prefers_bediz_and_accepts_legacy_installs() {
+        let directory = tempfile::tempdir().unwrap();
+        let legacy = directory.path().join("MyImage.exe");
+        let current = directory.path().join("Bediz.exe");
+
+        std::fs::write(&legacy, []).unwrap();
+        assert_eq!(
+            windows_executable(directory.path().to_owned()),
+            Some(legacy.clone())
+        );
+
+        std::fs::write(&current, []).unwrap();
+        assert_eq!(
+            windows_executable(directory.path().to_owned()),
+            Some(current.clone())
+        );
+        assert_eq!(windows_executable(current.clone()), Some(current));
+        assert_eq!(windows_executable(legacy.clone()), Some(legacy));
+    }
+
+    #[test]
+    fn windows_detection_ignores_other_names_and_missing_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let other = directory.path().join("other.exe");
+        let missing = directory.path().join("Bediz.exe");
+        std::fs::write(&other, []).unwrap();
+
+        assert_eq!(windows_executable(other), None);
+        assert_eq!(windows_executable(missing), None);
+        assert_eq!(windows_executable(directory.path().to_owned()), None);
+    }
+}
+
 #[cfg(target_os = "windows")]
 mod platform {
     use super::*;
@@ -184,21 +241,7 @@ mod platform {
     }
 
     fn file(path: PathBuf) -> Option<Bediz> {
-        let path = if path.is_dir() {
-            path.join("MyImage.exe")
-        } else {
-            path
-        };
-        if !path.is_file() {
-            return None;
-        }
-        if !path
-            .file_name()?
-            .to_str()?
-            .eq_ignore_ascii_case("MyImage.exe")
-        {
-            return None;
-        }
+        let path = windows_executable(path)?;
         Some(Bediz {
             file_open: has_protocol(path.parent()?),
             target: Target::Executable(path),
@@ -299,7 +342,7 @@ mod platform {
             .chain(installer_path())
             .chain(
                 std::env::var_os("LOCALAPPDATA")
-                    .map(|dir| PathBuf::from(dir).join("Programs/MyImage/MyImage.exe")),
+                    .map(|dir| PathBuf::from(dir).join("Programs/MyImage")),
             )
             .filter_map(file)
             .chain(store())
